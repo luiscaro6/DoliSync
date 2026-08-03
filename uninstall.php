@@ -100,6 +100,9 @@ $options = array(
 	'dolisync_lock_products_woo_to_dolibarr',
 	'dolisync_lock_products_catalog',
 	'dolisync_stock_sync_lock',
+	'dolisync_onboarding_complete',
+	'dolisync_onboarding_pending',
+	'dolisync_cf_access_enabled',
 );
 
 foreach ( $options as $option ) {

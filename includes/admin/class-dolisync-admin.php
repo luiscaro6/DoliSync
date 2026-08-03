@@ -17,6 +17,9 @@ class Dolisync_Admin {
 		add_action( 'admin_init', array( $this, 'handle_form_submissions' ) );
 	    add_action( 'admin_notices', array( $this, 'render_notices' ) );
         add_action(	'wp_ajax_dolisync_test_connection',	array( $this, 'ajax_test_connection' ) );
+		add_action( 'wp_ajax_dolisync_onboarding_save_test', array( $this, 'ajax_onboarding_save_test' ) );
+		add_action( 'wp_ajax_dolisync_onboarding_complete', array( $this, 'ajax_onboarding_complete' ) );
+		add_action( 'admin_init', array( $this, 'maybe_redirect_to_onboarding' ), 5 );
         add_action( 'wp_ajax_dolisync_get_warehouses', array( $this, 'ajax_get_warehouses' ) );
         add_action( 'wp_ajax_dolisync_get_last_check_time', array( $this, 'ajax_get_last_check_time' ) );
     }
@@ -164,6 +167,18 @@ class Dolisync_Admin {
 
 	}
 
+	public function maybe_redirect_to_onboarding() {
+		if ( ! current_user_can( 'manage_options' ) || ! get_option( 'dolisync_onboarding_pending' ) || wp_doing_ajax() ) {
+			return;
+		}
+		$page = isset( $_GET['page'] ) ? sanitize_key( wp_unslash( $_GET['page'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		if ( 'dolisync_settings' !== $page ) {
+			delete_option( 'dolisync_onboarding_pending' );
+			wp_safe_redirect( admin_url( 'admin.php?page=dolisync_settings&onboarding=1' ) );
+			exit;
+		}
+	}
+
 	private function redirect_to_schema_result( $result ) {
 		wp_safe_redirect( add_query_arg( 'dolisync-schema', sanitize_key( $result ), admin_url( 'admin.php?page=dolisync_settings&tab=health' ) ) );
 		exit;
@@ -174,20 +189,25 @@ class Dolisync_Admin {
 
 		$dolibarr_url = isset( $_POST['dolibarr_url'] ) ? esc_url_raw( wp_unslash( $_POST['dolibarr_url'] ) ) : '';
 		$dolibarr_api_key = isset( $_POST['dolibarr_api_key'] ) ? sanitize_text_field( wp_unslash( $_POST['dolibarr_api_key'] ) ) : '';
-        $cf_access_client_id = isset( $_POST['cf_access_client_id'] ) ? sanitize_text_field( wp_unslash( $_POST['cf_access_client_id'] ) ) : '';
+		$cf_access_enabled = isset( $_POST['cf_access_enabled'] ) ? 1 : 0;
+		$cf_access_client_id = isset( $_POST['cf_access_client_id'] ) ? sanitize_text_field( wp_unslash( $_POST['cf_access_client_id'] ) ) : '';
         $cf_access_client_secret = isset( $_POST['cf_access_client_secret'] ) ? sanitize_text_field( wp_unslash( $_POST['cf_access_client_secret'] ) ) : '';
         $current_cf_access_headers = Dolisync_Config::get_cf_access_headers();
         $cf_access_headers = is_array( $current_cf_access_headers ) ? $current_cf_access_headers : array();
 
-        if ( '' !== trim( $cf_access_client_id ) ) {
+		if ( $cf_access_enabled && '' !== trim( $cf_access_client_id ) ) {
             $cf_access_headers['CF-Access-Client-Id'] = $cf_access_client_id;
         } else {
             unset( $cf_access_headers['CF-Access-Client-Id'] );
         }
 
-        if ( '' !== trim( $cf_access_client_secret ) ) {
-            $cf_access_headers['CF-Access-Client-Secret'] = $cf_access_client_secret;
-        }
+		if ( $cf_access_enabled && '' !== trim( $cf_access_client_secret ) ) {
+			$cf_access_headers['CF-Access-Client-Secret'] = $cf_access_client_secret;
+		}
+		if ( ! $cf_access_enabled ) {
+			$cf_access_headers = array();
+		}
+		update_option( 'dolisync_cf_access_enabled', $cf_access_enabled, false );
 		$logs_enabled = isset( $_POST['logs_enabled'] ) ? 1 : 0;
 		$retain_data_on_uninstall = isset( $_POST['retain_data_on_uninstall'] ) ? 1 : 0;
         $allowed_levels = array( 'ERROR', 'WARNING', 'INFO', 'DEBUG', 'TRACE' );
@@ -354,7 +374,7 @@ class Dolisync_Admin {
 			wp_die( esc_html__( 'No tienes permiso para acceder a esta página.', 'dolisync' ) );
 		}
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/admin/class-dolisync-products-page.php';
-		Dolisync_Products_Page::render();
+		$this->render_guarded_page( array( 'Dolisync_Products_Page', 'render' ) );
 	}
 
 	public function render_orders_page() {
@@ -362,7 +382,7 @@ class Dolisync_Admin {
 			wp_die( esc_html__( 'No tienes permiso para acceder a esta página.', 'dolisync' ) );
 		}
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/admin/class-dolisync-orders-page.php';
-		Dolisync_Orders_Page::render();
+		$this->render_guarded_page( array( 'Dolisync_Orders_Page', 'render' ) );
 	}
 
 	public function render_customers_page() {
@@ -370,7 +390,72 @@ class Dolisync_Admin {
 			wp_die( esc_html__( 'No tienes permiso para acceder a esta página.', 'dolisync' ) );
 		}
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/admin/class-dolisync-customers-page.php';
-		Dolisync_Customers_Page::render();
+		$this->render_guarded_page( array( 'Dolisync_Customers_Page', 'render' ) );
+	}
+
+	private function render_guarded_page( $callback ) {
+		require_once DOLISYNC_PLUGIN_DIR . 'includes/core/class-dolisync-config.php';
+		$test = Dolisync_Config::get_last_connection_test();
+		$ready = Dolisync_Config::is_configured() && 'success' === ( $test['status'] ?? 'pending' );
+		if ( $ready ) {
+			call_user_func( $callback );
+			return;
+		}
+		ob_start();
+		call_user_func( $callback );
+		$content = ob_get_clean();
+		echo '<div class="dolisync-connection-locked">' . $content; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+		echo '<div class="dolisync-lock-card"><span class="dashicons dashicons-warning"></span><h2>' . esc_html__( 'DoliSync no está conectado', 'dolisync' ) . '</h2><p>' . esc_html__( 'Configura el endpoint y completa una prueba de conexión correcta para utilizar esta sección.', 'dolisync' ) . '</p><a class="button button-primary" href="' . esc_url( admin_url( 'admin.php?page=dolisync_settings&onboarding=1' ) ) . '">' . esc_html__( 'Configurar conexión', 'dolisync' ) . '</a></div></div>';
+	}
+
+	public function ajax_onboarding_save_test() {
+		check_ajax_referer( DOLISYNC_NONCE_ACTION, 'nonce' );
+		if ( ! $this->user_can_access_settings() ) {
+			wp_send_json_error( array( 'message' => __( 'No autorizado.', 'dolisync' ) ), 403 );
+		}
+		require_once DOLISYNC_PLUGIN_DIR . 'includes/core/class-dolisync-config.php';
+		$url_input = isset( $_POST['dolibarr_url'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['dolibarr_url'] ) ) ) : '';
+		if ( '' !== $url_input && ! preg_match( '#^https?://#i', $url_input ) ) {
+			$url_input = 'https://' . $url_input;
+		}
+		$url = esc_url_raw( $url_input );
+		$key = isset( $_POST['dolibarr_api_key'] ) ? sanitize_text_field( wp_unslash( $_POST['dolibarr_api_key'] ) ) : '';
+		if ( '' === $key ) {
+			$key = Dolisync_Config::get_dolibarr_api_key();
+		}
+		$url_parts = wp_parse_url( $url );
+		$url_is_valid = '' !== $url && ! empty( $url_parts['host'] ) && in_array( strtolower( (string) ( $url_parts['scheme'] ?? '' ) ), array( 'http', 'https' ), true ) && ! isset( $url_parts['user'] ) && ! isset( $url_parts['pass'] );
+		if ( ! $url_is_valid || '' === $key ) {
+			wp_send_json_error( array( 'message' => __( 'Indica una URL y una clave API válidas.', 'dolisync' ) ) );
+		}
+		$headers = Dolisync_Config::get_cf_access_headers();
+		$cf_enabled = ! empty( $_POST['cf_access_enabled'] );
+		if ( $cf_enabled ) {
+			$client_id = sanitize_text_field( wp_unslash( $_POST['cf_access_client_id'] ?? '' ) );
+			$client_secret = sanitize_text_field( wp_unslash( $_POST['cf_access_client_secret'] ?? '' ) );
+			if ( '' !== $client_id ) { $headers['CF-Access-Client-Id'] = $client_id; }
+			if ( '' !== $client_secret ) { $headers['CF-Access-Client-Secret'] = $client_secret; }
+		} else {
+			$headers = array();
+		}
+		Dolisync_Config::set_multiple( array( 'dolibarr_url' => $url, 'dolibarr_api_key' => $key, 'cf_access_headers' => $headers ) );
+		update_option( 'dolisync_cf_access_enabled', $cf_enabled ? 1 : 0, false );
+		require_once DOLISYNC_PLUGIN_DIR . 'includes/api/class-dolisync-api-client.php';
+		$result = ( new Dolisync_API_Client() )->test_connection();
+		if ( ! empty( $result['success'] ) && 'unexpected_status' !== ( $result['code'] ?? '' ) ) {
+			Dolisync_Config::set_connection_test_success( (int) ( $result['time_ms'] ?? 0 ) );
+		} else {
+			Dolisync_Config::set_connection_test_failed( (string) ( $result['message'] ?? __( 'Error de conexión.', 'dolisync' ) ) );
+		}
+		wp_send_json_success( array( 'connected' => ! empty( $result['success'] ) && 'unexpected_status' !== ( $result['code'] ?? '' ), 'result' => $result ) );
+	}
+
+	public function ajax_onboarding_complete() {
+		check_ajax_referer( DOLISYNC_NONCE_ACTION, 'nonce' );
+		if ( ! $this->user_can_access_settings() ) { wp_send_json_error( array(), 403 ); }
+		update_option( 'dolisync_onboarding_complete', 1, false );
+		delete_option( 'dolisync_onboarding_pending' );
+		wp_send_json_success( array( 'redirect' => admin_url( 'admin.php?page=dolisync_products' ) ) );
 	}
 
 	private function user_can_access_settings() {

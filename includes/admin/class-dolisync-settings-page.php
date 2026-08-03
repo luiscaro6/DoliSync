@@ -18,6 +18,10 @@ class Dolisync_Settings_Page {
 	}
 
 	public function render() {
+		if ( isset( $_GET['onboarding'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			$this->render_onboarding();
+			return;
+		}
 		if ( ! current_user_can( 'manage_options' ) ) {
 			wp_die( esc_html__( 'No tienes permisos suficientes para acceder a esta página.', 'dolisync' ) );
 		}
@@ -157,10 +161,37 @@ class Dolisync_Settings_Page {
 		<?php
 	}
 
+	private function render_onboarding() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'No tienes permisos suficientes para acceder a esta página.', 'dolisync' ) );
+		}
+		require_once DOLISYNC_PLUGIN_DIR . 'includes/core/class-dolisync-config.php';
+		$config = Dolisync_Config::get_all();
+		$cf = Dolisync_Config::get_cf_access_headers();
+		$cf_enabled = (bool) get_option( 'dolisync_cf_access_enabled', ! empty( $cf ) );
+		$last_test = Dolisync_Config::get_last_connection_test();
+		$is_reconfigure = Dolisync_Config::is_configured() || ! empty( $last_test['timestamp'] );
+		$has_api_key = '' !== Dolisync_Config::get_dolibarr_api_key();
+		?>
+		<div class="wrap dolisync-container dolisync-onboarding">
+			<div class="dolisync-onboarding-progress"><span class="is-active">1</span><span>2</span><span>3</span><span>4</span><span>5</span></div>
+			<form id="dolisync-onboarding-form">
+				<section class="dolisync-onboarding-step is-active"><span class="dashicons dashicons-swap"></span><h1><?php echo esc_html( $is_reconfigure ? __( 'Reconfiguremos DoliSync', 'dolisync' ) : __( 'Bienvenido a DoliSync', 'dolisync' ) ); ?></h1><p><?php echo esc_html( $is_reconfigure ? __( 'Revisaremos la conexión actual y volveremos a validarla.', 'dolisync' ) : __( 'Conectaremos WooCommerce con Dolibarr en cinco pasos rápidos.', 'dolisync' ) ); ?></p><?php if ( $is_reconfigure && ! empty( $last_test['error_message'] ) ) : ?><div class="notice notice-error inline dolisync-onboarding-last-error"><p><strong><?php echo esc_html__( 'Último error:', 'dolisync' ); ?></strong> <?php echo esc_html( $last_test['error_message'] ); ?></p><?php if ( ! empty( $last_test['timestamp'] ) ) : ?><small><?php echo esc_html( $last_test['timestamp'] ); ?></small><?php endif; ?></div><?php endif; ?></section>
+				<section class="dolisync-onboarding-step"><h2><?php echo esc_html__( 'Endpoint de Dolibarr', 'dolisync' ); ?></h2><label for="onboarding-url"><?php echo esc_html__( 'URL de Dolibarr', 'dolisync' ); ?></label><input id="onboarding-url" class="dolisync-input" type="text" inputmode="url" name="dolibarr_url" value="<?php echo esc_attr( $config['dolibarr_url'] ?? '' ); ?>" placeholder="https://dolibarr.ejemplo.com" required><p><?php echo esc_html__( 'Usa la URL base; si omites el protocolo se utilizará HTTPS.', 'dolisync' ); ?></p></section>
+				<section class="dolisync-onboarding-step"><h2><?php echo esc_html__( 'Autenticación', 'dolisync' ); ?></h2><label for="onboarding-key"><?php echo esc_html__( 'Clave API de Dolibarr', 'dolisync' ); ?></label><input id="onboarding-key" class="dolisync-input" type="password" name="dolibarr_api_key" <?php echo $has_api_key ? '' : 'required'; ?> autocomplete="new-password" placeholder="<?php echo esc_attr( $has_api_key ? __( 'Clave actual guardada; déjalo vacío para conservarla', 'dolisync' ) : __( 'Introduce la clave API', 'dolisync' ) ); ?>"><p><?php echo esc_html( $has_api_key ? __( 'Ya existe una clave cifrada. Solo escribe otra si deseas sustituirla.', 'dolisync' ) : __( 'La clave se guardará cifrada.', 'dolisync' ) ); ?></p></section>
+				<section class="dolisync-onboarding-step"><h2><?php echo esc_html__( 'Cloudflare Access', 'dolisync' ); ?></h2><label class="dolisync-switch"><input type="checkbox" name="cf_access_enabled" value="1" <?php checked( $cf_enabled ); ?>><span></span><?php echo esc_html__( 'Habilitar credenciales de CF Access', 'dolisync' ); ?></label><div class="dolisync-cf-fields<?php echo $cf_enabled ? '' : ' is-disabled'; ?>"><label for="onboarding-cf-id">CF-Access-Client-Id</label><input id="onboarding-cf-id" class="dolisync-input" type="text" name="cf_access_client_id" value="<?php echo esc_attr( $cf['CF-Access-Client-Id'] ?? '' ); ?>" <?php disabled( ! $cf_enabled ); ?>><label for="onboarding-cf-secret">CF-Access-Client-Secret</label><input id="onboarding-cf-secret" class="dolisync-input" type="password" name="cf_access_client_secret" autocomplete="new-password" <?php disabled( ! $cf_enabled ); ?>></div><p><?php echo esc_html__( 'Déjalo desactivado si tu Dolibarr no está protegido por Cloudflare Access.', 'dolisync' ); ?></p></section>
+				<section class="dolisync-onboarding-step"><h2><?php echo esc_html__( 'Prueba de conexión', 'dolisync' ); ?></h2><p><?php echo esc_html__( 'Guardaremos los ajustes y consultaremos /status.', 'dolisync' ); ?></p><button type="button" id="dolisync-onboarding-test" class="button button-primary"><?php echo esc_html__( 'Guardar y probar conexión', 'dolisync' ); ?></button><div id="dolisync-onboarding-result" aria-live="polite"></div></section>
+				<div class="dolisync-onboarding-actions"><button type="button" class="button dolisync-onboarding-prev" disabled><?php echo esc_html__( 'Anterior', 'dolisync' ); ?></button><button type="button" class="button button-primary dolisync-onboarding-next"><?php echo esc_html__( 'Continuar', 'dolisync' ); ?></button><button type="button" class="button button-primary dolisync-onboarding-finish" hidden disabled><?php echo esc_html__( 'Finalizar', 'dolisync' ); ?></button></div>
+			</form>
+		</div>
+		<?php
+	}
+
 	private function render_settings_tab() {
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/core/class-dolisync-config.php';
 		$config = Dolisync_Config::get_all();
 		$cf_access_headers = Dolisync_Config::get_cf_access_headers();
+		$cf_access_enabled = (bool) get_option( 'dolisync_cf_access_enabled', ! empty( $cf_access_headers ) );
 		$tax_mapping = Dolisync_Config::get_tax_mapping();
 		global $wpdb;
 		$woocommerce_tax_rates = class_exists( 'WooCommerce' ) ? $wpdb->get_results( "SELECT tax_rate_id, tax_rate, tax_rate_name, tax_rate_country, tax_rate_class FROM {$wpdb->prefix}woocommerce_tax_rates ORDER BY tax_rate_country, tax_rate_class, tax_rate" ) : array(); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
@@ -187,12 +218,16 @@ class Dolisync_Settings_Page {
 						<p class="description"><?php echo esc_html__( 'Déjalo vacío si no deseas cambiar la clave actual.', 'dolisync' ); ?></p>
 					</div>
 
-					<div class="dolisync-form-group">
+					<div class="dolisync-form-group dolisync-cf-toggle">
+						<label><input type="checkbox" name="cf_access_enabled" value="1" <?php checked( $cf_access_enabled ); ?>> <?php echo esc_html__( 'Habilitar Cloudflare Access', 'dolisync' ); ?></label>
+					</div>
+
+					<div class="dolisync-form-group dolisync-cf-fields">
 						<label for="cf_access_client_id"><?php echo esc_html__( 'CF-Access-Client-Id', 'dolisync' ); ?></label>
 						<input class="dolisync-input" type="text" id="cf_access_client_id" name="cf_access_client_id" value="<?php echo esc_attr( $cf_access_headers['CF-Access-Client-Id'] ?? '' ); ?>" placeholder="TU_CLIENT_ID">
 					</div>
 
-					<div class="dolisync-form-group">
+					<div class="dolisync-form-group dolisync-cf-fields">
 						<label for="cf_access_client_secret"><?php echo esc_html__( 'CF-Access-Client-Secret', 'dolisync' ); ?></label>
 						<input class="dolisync-input" type="password" id="cf_access_client_secret" name="cf_access_client_secret" value="" placeholder="TU_CLIENT_SECRET">
 						<p class="description"><?php echo esc_html__( 'Headers opcionales para entornos protegidos por Cloudflare Access. Déjalo vacío para conservar el secreto actual.', 'dolisync' ); ?></p>

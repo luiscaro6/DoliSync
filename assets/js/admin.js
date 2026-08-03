@@ -70,6 +70,52 @@ document.addEventListener('DOMContentLoaded', function () {
 });
 
 jQuery(function ($) {
+	function toggleCfFields($scope) {
+		const enabled = $scope.find('[name="cf_access_enabled"]').is(':checked');
+		$scope.find('.dolisync-cf-fields input').prop('disabled', !enabled);
+		$scope.find('.dolisync-cf-fields').toggleClass('is-disabled', !enabled);
+	}
+	$('.dolisync-onboarding, .dolisync-settings-form-panel').each(function () { toggleCfFields($(this)); });
+	window.setTimeout(function () {
+		$('.dolisync-onboarding, .dolisync-settings-form-panel').each(function () { toggleCfFields($(this)); });
+	}, 0);
+	$(document).on('change', '[name="cf_access_enabled"]', function () { toggleCfFields($(this).closest('form, .dolisync-onboarding')); });
+
+	const $wizard = $('#dolisync-onboarding-form');
+	if ($wizard.length) {
+		let step = 0;
+		const $steps = $wizard.find('.dolisync-onboarding-step');
+		const showStep = function (next) {
+			step = Math.max(0, Math.min($steps.length - 1, next));
+			$steps.removeClass('is-active').eq(step).addClass('is-active');
+			$('.dolisync-onboarding-progress span').each(function (i) { $(this).toggleClass('is-active', i <= step); });
+			$wizard.find('.dolisync-onboarding-prev').prop('disabled', step === 0);
+			$wizard.find('.dolisync-onboarding-next').prop('hidden', step === $steps.length - 1);
+			$wizard.find('.dolisync-onboarding-finish').prop('hidden', step !== $steps.length - 1);
+		};
+		$wizard.on('click', '.dolisync-onboarding-next', function () {
+			const currentInputs = $steps.eq(step).find(':input[required]');
+			let valid = true; currentInputs.each(function () { if (!this.reportValidity()) valid = false; });
+			if (valid) showStep(step + 1);
+		});
+		$wizard.on('click', '.dolisync-onboarding-prev', function () { showStep(step - 1); });
+		$('#dolisync-onboarding-test').on('click', function () {
+			const $button = $(this), $result = $('#dolisync-onboarding-result');
+			if (!$wizard[0].reportValidity()) return;
+			$button.prop('disabled', true); $result.html('<p>Conectando con Dolibarr…</p>');
+			const payload = $wizard.serializeArray(); payload.push({name: 'action', value: 'dolisync_onboarding_save_test'}, {name: 'nonce', value: DoliSync.nonce});
+			$.post(DoliSync.ajaxUrl, payload).done(function (response) {
+				if (!response.success) { $result.html('<div class="notice notice-error inline"><p>' + dolisyncEscapeHtml(response.data.message) + '</p></div>'); return; }
+				const ok = !!response.data.connected;
+				$result.html('<div class="notice ' + (ok ? 'notice-success' : 'notice-error') + ' inline"><p><strong>' + (ok ? 'Conexión correcta' : 'No se pudo validar la conexión') + '</strong></p></div><pre>' + dolisyncEscapeHtml(JSON.stringify(response.data.result, null, 2)) + '</pre>');
+				$wizard.find('.dolisync-onboarding-finish').prop('disabled', !ok);
+			}).fail(function (xhr) { $result.html('<div class="notice notice-error inline"><p>' + dolisyncAjaxError(xhr) + '</p></div>'); }).always(function () { $button.prop('disabled', false); });
+		});
+		$wizard.on('click', '.dolisync-onboarding-finish', function () {
+			$.post(DoliSync.ajaxUrl, {action: 'dolisync_onboarding_complete', nonce: DoliSync.nonce}).done(function (response) { if (response.success) window.location.href = response.data.redirect; });
+		});
+	}
+
 	$('#dolisync-load-warehouses').on('click', function () {
 		const $button = $(this); const $select = $('#warehouse_id'); const $result = $('#dolisync-warehouses-result');
 		$button.prop('disabled', true); $result.html('<p>Consultando almacenes en Dolibarr…</p>');

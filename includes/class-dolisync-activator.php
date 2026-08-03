@@ -35,6 +35,9 @@ class Dolisync_Activator {
 		$activated_at = current_time( 'mysql' );
 		update_option( 'dolisync_version', DOLISYNC_VERSION );
 		update_option( 'dolisync_activated', $activated_at );
+		if ( false === get_option( 'dolisync_onboarding_complete', false ) ) {
+			update_option( 'dolisync_onboarding_pending', 1, false );
+		}
 		if ( DOLISYNC_VERSION !== get_option( 'dolisync_version' ) || $activated_at !== get_option( 'dolisync_activated' ) ) {
 			if ( null === $previous_version ) {
 				delete_option( 'dolisync_version' );
