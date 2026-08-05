@@ -13,8 +13,11 @@ class Dolisync_Customers_Page {
 	public static function init() {
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/database/class-dolisync-schema.php';
 		Dolisync_Schema::ensure_ignored_items_table();
+		Dolisync_Schema::ensure_contact_conflicts_table();
 		add_action( 'wp_ajax_dolisync_customers_catalog', array( __CLASS__, 'ajax_catalog' ) );
 		add_action( 'wp_ajax_dolisync_customer_action', array( __CLASS__, 'ajax_action' ) );
+		add_action( 'wp_ajax_dolisync_contact_conflicts', array( __CLASS__, 'ajax_conflicts' ) );
+		add_action( 'wp_ajax_dolisync_resolve_contact_conflict', array( __CLASS__, 'ajax_resolve_conflict' ) );
 	}
 
 	public static function render() {
@@ -32,6 +35,11 @@ class Dolisync_Customers_Page {
 				</div>
 				<button type="button" class="button dolisync-customers-reload"><span class="dashicons dashicons-update"></span> <?php echo esc_html__( 'Actualizar clientes', 'dolisync' ); ?></button>
 			</div>
+			<nav class="nav-tab-wrapper dolisync-customers-tabs" aria-label="<?php echo esc_attr__( 'Secciones de clientes', 'dolisync' ); ?>">
+				<button type="button" class="nav-tab nav-tab-active" data-customers-tab="catalog"><?php echo esc_html__( 'Clientes', 'dolisync' ); ?></button>
+				<button type="button" class="nav-tab" data-customers-tab="conflicts"><?php echo esc_html__( 'Conflictos', 'dolisync' ); ?> <span id="dolisync-conflicts-count" class="dolisync-tab-count">0</span></button>
+			</nav>
+			<div id="dolisync-customers-catalog-panel" class="dolisync-customers-panel">
 			<section class="dolisync-page-actions" aria-labelledby="dolisync-customers-sync-title">
 				<div class="dolisync-page-actions-copy">
 					<span class="dashicons dashicons-groups"></span>
@@ -51,6 +59,12 @@ class Dolisync_Customers_Page {
 			<div id="dolisync-customers-notice" aria-live="polite"></div>
 			<div id="dolisync-customers-table" class="dolisync-products-table-wrap"><div class="dolisync-products-loading"><span class="spinner is-active"></span><?php echo esc_html__( 'Leyendo clientes…', 'dolisync' ); ?></div></div>
 			<div id="dolisync-customers-pagination" class="dolisync-products-pagination"></div>
+			</div>
+			<div id="dolisync-customers-conflicts-panel" class="dolisync-customers-panel" hidden>
+				<div class="dolisync-conflicts-heading"><div><h2><?php echo esc_html__( 'Conflictos de identidad', 'dolisync' ); ?></h2><p><?php echo esc_html__( 'Compara ambos registros y elige cuál debe sobrescribir al otro antes de vincularlos.', 'dolisync' ); ?></p></div><button type="button" class="button dolisync-conflicts-reload"><span class="dashicons dashicons-update"></span><?php echo esc_html__( 'Actualizar', 'dolisync' ); ?></button></div>
+				<div id="dolisync-conflicts-notice" aria-live="polite"></div>
+				<div id="dolisync-conflicts-table" class="dolisync-products-table-wrap"><div class="dolisync-products-loading"><span class="spinner is-active"></span><?php echo esc_html__( 'Leyendo conflictos…', 'dolisync' ); ?></div></div>
+			</div>
 		</div>
 		<?php
 	}
@@ -97,6 +111,26 @@ class Dolisync_Customers_Page {
 			wp_send_json_success( array( 'message' => $result['message'] ) );
 		} catch ( Throwable $e ) {
 			wp_send_json_error( array( 'message' => $e->getMessage() ), 500 );
+		}
+	}
+
+	public static function ajax_conflicts() {
+		self::guard();
+		require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/contacts/class-dolisync-contact-conflicts.php';
+		$rows = Dolisync_Contact_Conflicts::get_open();
+		wp_send_json_success( array( 'rows' => $rows, 'count' => count( $rows ) ) );
+	}
+
+	public static function ajax_resolve_conflict() {
+		self::guard();
+		$conflict_id = isset( $_POST['conflict_id'] ) ? absint( wp_unslash( $_POST['conflict_id'] ) ) : 0;
+		$winner = isset( $_POST['winner'] ) ? sanitize_key( wp_unslash( $_POST['winner'] ) ) : '';
+		try {
+			require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/contacts/class-dolisync-contact-conflicts.php';
+			Dolisync_Contact_Conflicts::resolve( $conflict_id, $winner );
+			wp_send_json_success( array( 'message' => 'dolibarr' === $winner ? __( 'Se conservaron los datos de Dolibarr y se vinculó el cliente.', 'dolisync' ) : __( 'Se conservaron los datos de WooCommerce y se vinculó el tercero.', 'dolisync' ) ) );
+		} catch ( Throwable $e ) {
+			wp_send_json_error( array( 'message' => $e->getMessage() ), 409 );
 		}
 	}
 

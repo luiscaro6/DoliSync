@@ -16,6 +16,7 @@ class Dolisync_Order_Sync {
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/core/class-dolisync-action-logger.php';
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/api/class-dolisync-api-client.php';
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/database/class-dolisync-schema.php';
+		require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/contacts/class-dolisync-contact-identity-resolver.php';
 		Dolisync_Schema::ensure_order_relations_table();
 		$relation = self::get_order_relation( (int) $order_id );
 		$invoice_id = (int) ( $relation['dolibarr_invoice_id'] ?? 0 );
@@ -66,6 +67,7 @@ class Dolisync_Order_Sync {
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/core/class-dolisync-action-logger.php';
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/api/class-dolisync-api-client.php';
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/database/class-dolisync-schema.php';
+		require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/contacts/class-dolisync-contact-identity-resolver.php';
 		Dolisync_Schema::ensure_order_relations_table();
 		Dolisync_Schema::ensure_contact_relations_table();
 
@@ -253,43 +255,18 @@ class Dolisync_Order_Sync {
 	}
 
 	private static function resolve_thirdparty_id_for_order( WC_Order $order, Dolisync_API_Client $api, $document_id ) {
-		global $wpdb;
-
 		$email = sanitize_email( (string) $order->get_billing_email() );
 		$user_id = (int) $order->get_user_id();
-		$table = $wpdb->prefix . 'dolisync_contact_relations';
-		$local_by_document = $wpdb->get_row( $wpdb->prepare( "SELECT dolibarr_contact_id FROM {$table} WHERE dni = %s LIMIT 1", $document_id ), ARRAY_A ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-		if ( ! empty( $local_by_document['dolibarr_contact_id'] ) && self::thirdparty_accepts_document( $api, (int) $local_by_document['dolibarr_contact_id'], $document_id ) ) {
-			return self::update_thirdparty_from_order( $order, $api, (int) $local_by_document['dolibarr_contact_id'], $document_id );
+		$identity = Dolisync_Contact_Identity_Resolver::resolve_dolibarr_thirdparty( $api, $document_id, $email );
+		if ( 'conflict' === $identity['status'] ) {
+			require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/contacts/class-dolisync-contact-conflicts.php';
+			$dolibarr_conflict_id = (int) ( $identity['document_match_id'] ?? $identity['email_match_id'] ?? 0 );
+			Dolisync_Contact_Conflicts::record( 'order_to_dolibarr', 'identity', $user_id, $dolibarr_conflict_id, Dolisync_Contact_Conflicts::snapshot_wp_user( $user_id ), Dolisync_Contact_Conflicts::fetch_dolibarr_snapshot( $api, $dolibarr_conflict_id ), (string) $identity['message'] );
+			Dolisync_Action_Logger::log_action( 'tercero', 'resolución_identidad', 'error', (string) $identity['message'], get_current_user_id() );
+			return 0;
 		}
-
-		$escaped_document = str_replace( array( '\\', "'" ), array( '\\\\', "\\'" ), $document_id );
-		$document_response = $api->get( '/thirdparties', array( 'sortfield' => 't.rowid', 'sortorder' => 'ASC', 'limit' => 1, 'sqlfilters' => "(t.siren:=:'{$escaped_document}')" ) );
-		$document_match = ! empty( $document_response['success'] ) ? self::extract_dolibarr_id( $document_response['data'] ?? null ) : 0;
-		if ( $document_match > 0 ) {
-			return self::update_thirdparty_from_order( $order, $api, $document_match, $document_id );
-		}
-
-		if ( $user_id > 0 ) {
-			$existing = $wpdb->get_row( $wpdb->prepare( "SELECT dolibarr_contact_id, dni FROM {$table} WHERE wp_user_id = %d LIMIT 1", $user_id ), ARRAY_A ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-			if ( ! empty( $existing['dolibarr_contact_id'] ) && $document_id === (string) ( $existing['dni'] ?? '' ) && self::thirdparty_accepts_document( $api, (int) $existing['dolibarr_contact_id'], $document_id ) ) {
-				return self::update_thirdparty_from_order( $order, $api, (int) $existing['dolibarr_contact_id'], $document_id );
-			}
-		}
-
-		if ( '' !== $email ) {
-			$existing = $wpdb->get_row( $wpdb->prepare( "SELECT dolibarr_contact_id, dni FROM {$table} WHERE email = %s LIMIT 1", $email ), ARRAY_A ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-			if ( ! empty( $existing['dolibarr_contact_id'] ) && $document_id === (string) ( $existing['dni'] ?? '' ) && self::thirdparty_accepts_document( $api, (int) $existing['dolibarr_contact_id'], $document_id ) ) {
-				return self::update_thirdparty_from_order( $order, $api, (int) $existing['dolibarr_contact_id'], $document_id );
-			}
-
-			$thirdparty_response = $api->get( '/thirdparties/email/' . rawurlencode( $email ) );
-			if ( ! empty( $thirdparty_response['success'] ) ) {
-				$thirdparty_id = self::extract_dolibarr_id( $thirdparty_response['data'] ?? null );
-				if ( $thirdparty_id > 0 && self::thirdparty_accepts_document( $api, $thirdparty_id, $document_id ) ) {
-					return self::update_thirdparty_from_order( $order, $api, $thirdparty_id, $document_id );
-				}
-			}
+		if ( 'matched' === $identity['status'] ) {
+			return self::update_thirdparty_from_order( $order, $api, (int) $identity['id'], $document_id );
 		}
 
 		$payload = self::build_thirdparty_payload( $order, $document_id, true );

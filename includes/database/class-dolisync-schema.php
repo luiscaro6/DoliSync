@@ -35,7 +35,9 @@ class Dolisync_Schema {
 			'dolisync_error_stats' => array( 'id' => 'BIGINT(20) UNSIGNED NOT NULL', 'error_count_total' => 'BIGINT(20) UNSIGNED NOT NULL DEFAULT 0', 'error_count_24h' => 'BIGINT(20) UNSIGNED NOT NULL DEFAULT 0', 'error_count_by_type' => 'LONGTEXT NULL', 'updated_at' => 'DATETIME NULL DEFAULT NULL' ),
 			'dolisync_actions' => array( 'id' => 'BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT', 'tipo' => 'VARCHAR(50) NOT NULL', 'accion' => 'VARCHAR(100) NOT NULL', 'estado' => 'VARCHAR(20) NOT NULL', 'descripcion' => 'LONGTEXT NOT NULL', 'timestamp' => 'DATETIME NOT NULL', 'usuario_id' => 'BIGINT(20) UNSIGNED NULL', 'created_at' => 'DATETIME DEFAULT CURRENT_TIMESTAMP' ),
 			'dolisync_contact_relations' => array( 'id' => 'BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT', 'dolibarr_contact_id' => 'BIGINT(20) UNSIGNED NOT NULL', 'wp_user_id' => 'BIGINT(20) UNSIGNED NOT NULL', 'dni' => 'VARCHAR(50) NOT NULL', 'email' => 'VARCHAR(190) NOT NULL', 'first_name' => "VARCHAR(100) NOT NULL DEFAULT ''", 'last_name' => "VARCHAR(100) NOT NULL DEFAULT ''", 'synced_at' => 'DATETIME NULL DEFAULT NULL', 'first_synced_at' => 'DATETIME NULL DEFAULT NULL', 'source' => 'VARCHAR(50) NULL DEFAULT NULL', 'created_at' => 'DATETIME NULL DEFAULT NULL', 'updated_at' => 'DATETIME NULL DEFAULT NULL' ),
+			'dolisync_contact_conflicts' => array( 'id' => 'BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT', 'conflict_key' => 'VARCHAR(191) NOT NULL', 'direction' => 'VARCHAR(30) NOT NULL', 'conflict_type' => 'VARCHAR(50) NOT NULL', 'wp_user_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'dolibarr_contact_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'wp_data' => 'LONGTEXT NULL', 'dolibarr_data' => 'LONGTEXT NULL', 'message' => 'LONGTEXT NULL', 'status' => "VARCHAR(20) NOT NULL DEFAULT 'open'", 'resolution' => 'VARCHAR(20) NULL DEFAULT NULL', 'created_at' => 'DATETIME NULL DEFAULT NULL', 'updated_at' => 'DATETIME NULL DEFAULT NULL', 'resolved_at' => 'DATETIME NULL DEFAULT NULL', 'resolved_by' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL' ),
 			'dolisync_product_relations' => array( 'id' => 'BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT', 'dolibarr_product_id' => 'BIGINT(20) UNSIGNED NOT NULL', 'wc_product_id' => 'BIGINT(20) UNSIGNED NOT NULL', 'sku' => "VARCHAR(190) NOT NULL DEFAULT ''", 'name' => "VARCHAR(255) NOT NULL DEFAULT ''", 'description' => 'LONGTEXT NULL', 'short_description' => 'LONGTEXT NULL', 'price' => 'DECIMAL(18,6) NULL DEFAULT NULL', 'currency' => 'VARCHAR(10) NULL DEFAULT NULL', 'stock_qty' => 'DECIMAL(18,6) NULL DEFAULT NULL', 'product_type' => 'VARCHAR(50) NULL DEFAULT NULL', 'status' => 'VARCHAR(20) NULL DEFAULT NULL', 'categories_json' => 'LONGTEXT NULL', 'image_url' => 'LONGTEXT NULL', 'last_sync_status' => 'VARCHAR(20) NULL DEFAULT NULL', 'last_error_message' => 'LONGTEXT NULL', 'first_synced_at' => 'DATETIME NULL DEFAULT NULL', 'synced_at' => 'DATETIME NULL DEFAULT NULL', 'created_at' => 'DATETIME NULL DEFAULT NULL', 'updated_at' => 'DATETIME NULL DEFAULT NULL' ),
+			'dolisync_product_conflicts' => array( 'id' => 'BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT', 'conflict_key' => 'VARCHAR(191) NOT NULL', 'direction' => 'VARCHAR(30) NOT NULL', 'conflict_type' => 'VARCHAR(50) NOT NULL', 'wc_product_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'dolibarr_product_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'wc_data' => 'LONGTEXT NULL', 'dolibarr_data' => 'LONGTEXT NULL', 'message' => 'LONGTEXT NULL', 'status' => "VARCHAR(20) NOT NULL DEFAULT 'open'", 'resolution' => 'VARCHAR(20) NULL DEFAULT NULL', 'created_at' => 'DATETIME NULL DEFAULT NULL', 'updated_at' => 'DATETIME NULL DEFAULT NULL', 'resolved_at' => 'DATETIME NULL DEFAULT NULL', 'resolved_by' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL' ),
 			'dolisync_order_relations' => array( 'id' => 'BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT', 'wc_order_id' => 'BIGINT(20) UNSIGNED NOT NULL', 'wc_order_number' => "VARCHAR(100) NOT NULL DEFAULT ''", 'dolibarr_thirdparty_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'dolibarr_order_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'dolibarr_invoice_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'order_status' => 'VARCHAR(50) NULL DEFAULT NULL', 'invoice_status' => 'VARCHAR(50) NULL DEFAULT NULL', 'sync_status' => 'VARCHAR(20) NULL DEFAULT NULL', 'last_error_message' => 'LONGTEXT NULL', 'invoice_ref' => 'VARCHAR(255) NULL DEFAULT NULL', 'invoice_pdf_path' => 'TEXT NULL', 'invoice_pdf_status' => "VARCHAR(20) NOT NULL DEFAULT 'pending'", 'invoice_pdf_downloaded_at' => 'DATETIME NULL DEFAULT NULL', 'invoice_pdf_last_error' => 'LONGTEXT NULL', 'invoice_email_status' => "VARCHAR(20) NOT NULL DEFAULT 'pending'", 'invoice_email_sent_at' => 'DATETIME NULL DEFAULT NULL', 'invoice_email_next_retry_at' => 'DATETIME NULL DEFAULT NULL', 'invoice_email_last_error' => 'LONGTEXT NULL', 'invoice_email_attempts' => 'INT UNSIGNED NOT NULL DEFAULT 0', 'synced_at' => 'DATETIME NULL DEFAULT NULL', 'created_at' => 'DATETIME NULL DEFAULT NULL', 'updated_at' => 'DATETIME NULL DEFAULT NULL' ),
 			'dolisync_ignored_items' => array( 'id' => 'BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT', 'resource_type' => 'VARCHAR(20) NOT NULL', 'wc_id' => 'BIGINT(20) UNSIGNED NOT NULL DEFAULT 0', 'dolibarr_id' => 'BIGINT(20) UNSIGNED NOT NULL DEFAULT 0', 'ignored_by' => 'BIGINT(20) UNSIGNED NOT NULL DEFAULT 0', 'ignored_at' => 'DATETIME NOT NULL', 'updated_at' => 'DATETIME NOT NULL' ),
 			'dolisync_product_category_mappings' => array( 'id' => 'BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT', 'dolibarr_category_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'dolibarr_parent_category_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'wc_category_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'wc_parent_category_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'category_name' => "VARCHAR(255) NOT NULL DEFAULT ''", 'synced_at' => 'DATETIME NULL DEFAULT NULL', 'created_at' => 'DATETIME NULL DEFAULT NULL', 'updated_at' => 'DATETIME NULL DEFAULT NULL' ),
@@ -67,7 +69,9 @@ class Dolisync_Schema {
 		self::ensure_error_stats_table();
 		self::ensure_actions_table();
 		self::ensure_contact_relations_table();
+		self::ensure_contact_conflicts_table();
 		self::ensure_product_relations_table();
+		self::ensure_product_conflicts_table();
 		self::ensure_order_relations_table();
 		self::ensure_ignored_items_table();
 		self::ensure_product_category_mappings_table();
@@ -174,6 +178,39 @@ class Dolisync_Schema {
         }
     }
 
+	/** Asegura el historial de conflictos de identidad de contactos. */
+	public static function ensure_contact_conflicts_table() {
+		global $wpdb;
+		$table = $wpdb->prefix . 'dolisync_contact_conflicts';
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+			return;
+		}
+		$charset_collate = $wpdb->get_charset_collate();
+		$sql = "CREATE TABLE {$table} (
+			id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+			conflict_key VARCHAR(191) NOT NULL,
+			direction VARCHAR(30) NOT NULL,
+			conflict_type VARCHAR(50) NOT NULL,
+			wp_user_id BIGINT(20) UNSIGNED NULL DEFAULT NULL,
+			dolibarr_contact_id BIGINT(20) UNSIGNED NULL DEFAULT NULL,
+			wp_data LONGTEXT NULL,
+			dolibarr_data LONGTEXT NULL,
+			message LONGTEXT NULL,
+			status VARCHAR(20) NOT NULL DEFAULT 'open',
+			resolution VARCHAR(20) NULL DEFAULT NULL,
+			created_at DATETIME NULL DEFAULT NULL,
+			updated_at DATETIME NULL DEFAULT NULL,
+			resolved_at DATETIME NULL DEFAULT NULL,
+			resolved_by BIGINT(20) UNSIGNED NULL DEFAULT NULL,
+			PRIMARY KEY (id),
+			UNIQUE KEY conflict_key (conflict_key),
+			KEY status (status),
+			KEY wp_user_id (wp_user_id),
+			KEY dolibarr_contact_id (dolibarr_contact_id)
+		) {$charset_collate};";
+		self::execute_schema_query( $sql, 'crear tabla de conflictos de contactos' );
+	}
+
     /**
      * Asegura la tabla principal de relaciones de productos.
      */
@@ -217,6 +254,36 @@ class Dolisync_Schema {
 
 		self::execute_schema_query( $sql, 'crear tabla de relaciones de productos' );
     }
+
+	/** Asegura el registro de conflictos de identidad de productos. */
+	public static function ensure_product_conflicts_table() {
+		global $wpdb;
+		$table = $wpdb->prefix . 'dolisync_product_conflicts';
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+			return;
+		}
+		$charset_collate = $wpdb->get_charset_collate();
+		$sql = "CREATE TABLE {$table} (
+			id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+			conflict_key VARCHAR(191) NOT NULL,
+			direction VARCHAR(30) NOT NULL,
+			conflict_type VARCHAR(50) NOT NULL,
+			wc_product_id BIGINT(20) UNSIGNED NULL DEFAULT NULL,
+			dolibarr_product_id BIGINT(20) UNSIGNED NULL DEFAULT NULL,
+			wc_data LONGTEXT NULL,
+			dolibarr_data LONGTEXT NULL,
+			message LONGTEXT NULL,
+			status VARCHAR(20) NOT NULL DEFAULT 'open',
+			resolution VARCHAR(20) NULL DEFAULT NULL,
+			created_at DATETIME NULL DEFAULT NULL,
+			updated_at DATETIME NULL DEFAULT NULL,
+			resolved_at DATETIME NULL DEFAULT NULL,
+			resolved_by BIGINT(20) UNSIGNED NULL DEFAULT NULL,
+			PRIMARY KEY (id), UNIQUE KEY conflict_key (conflict_key), KEY status (status),
+			KEY wc_product_id (wc_product_id), KEY dolibarr_product_id (dolibarr_product_id)
+		) {$charset_collate};";
+		self::execute_schema_query( $sql, 'crear tabla de conflictos de productos' );
+	}
 
     /**
      * Asegura la tabla de relaciones entre pedidos WooCommerce y Dolibarr.

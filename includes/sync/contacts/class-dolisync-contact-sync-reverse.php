@@ -24,6 +24,7 @@ class Dolisync_Contact_Sync_Reverse {
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/api/class-dolisync-api-client.php';
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/database/class-dolisync-db-manager.php';
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/utils/class-dolisync-spanish-document-validator.php';
+		require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/contacts/class-dolisync-contact-identity-resolver.php';
 
 		$this->api_client = new Dolisync_API_Client();
 		$this->db_manager = new Dolisync_DB_Manager();
@@ -611,6 +612,8 @@ class Dolisync_Contact_Sync_Reverse {
 		$table = $wpdb->prefix . 'dolisync_contact_relations';
 		$relation = $wpdb->get_row( $wpdb->prepare( "SELECT id, wp_user_id FROM {$table} WHERE dolibarr_contact_id = %d LIMIT 1", $dolibarr_id ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 		if ( $relation && (int) $relation->wp_user_id !== (int) $wp_user_id ) {
+			require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/contacts/class-dolisync-contact-conflicts.php';
+			Dolisync_Contact_Conflicts::record( 'woo_to_dolibarr', 'existing_relation', $wp_user_id, $dolibarr_id, Dolisync_Contact_Conflicts::snapshot_wp_user( $wp_user_id ), Dolisync_Contact_Conflicts::fetch_dolibarr_snapshot( $this->api_client, $dolibarr_id ), sprintf( __( 'El tercero Dolibarr %1$d ya está vinculado con otro cliente WooCommerce (%2$d).', 'dolisync' ), $dolibarr_id, (int) $relation->wp_user_id ) );
 			throw new Exception( sprintf( __( 'El tercero Dolibarr %1$d ya está vinculado con otro cliente WooCommerce (%2$d).', 'dolisync' ), $dolibarr_id, (int) $relation->wp_user_id ) );
 		}
 
@@ -646,9 +649,19 @@ class Dolisync_Contact_Sync_Reverse {
 	 */
 	private function create_new_contact_dolibarr( $wp_user_id, $dni, $email, $first_name ) {
 		global $wpdb;
-		$existing_dolibarr_id = $this->find_dolibarr_contact_id( $email, $dni );
-		if ( $existing_dolibarr_id > 0 && $this->dolibarr_contact_matches_identity( $existing_dolibarr_id, $dni, $email ) ) {
+		$identity = Dolisync_Contact_Identity_Resolver::resolve_dolibarr_thirdparty( $this->api_client, $dni, $email );
+		if ( 'conflict' === $identity['status'] ) {
+			require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/contacts/class-dolisync-contact-conflicts.php';
+			$dolibarr_conflict_id = (int) ( $identity['document_match_id'] ?? $identity['email_match_id'] ?? 0 );
+			Dolisync_Contact_Conflicts::record( 'woo_to_dolibarr', 'identity', $wp_user_id, $dolibarr_conflict_id, Dolisync_Contact_Conflicts::snapshot_wp_user( $wp_user_id ), Dolisync_Contact_Conflicts::fetch_dolibarr_snapshot( $this->api_client, $dolibarr_conflict_id ), (string) $identity['message'] );
+			throw new Exception( (string) $identity['message'] );
+		}
+		$existing_dolibarr_id = 'matched' === $identity['status'] ? (int) $identity['id'] : 0;
+		if ( $existing_dolibarr_id > 0 ) {
 			$this->link_existing_dolibarr_contact( $wp_user_id, $existing_dolibarr_id, $dni, $email, $first_name );
+			// WooCommerce es el origen en esta dirección: tras vincular, aplica sus datos.
+			$relation = $this->get_relation_by_wp_user_id( $wp_user_id );
+			$this->update_existing_contact_dolibarr( $relation, get_user_by( 'id', $wp_user_id ), $dni, $email, $first_name );
 			return;
 		}
 		

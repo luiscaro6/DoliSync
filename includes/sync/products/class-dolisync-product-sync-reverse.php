@@ -17,6 +17,7 @@ class Dolisync_Product_Sync_Reverse {
 	private $stats = array(
 		'created'  => 0,
 		'updated'  => 0,
+		'conflicts' => 0,
 		'skipped'  => 0,
 		'errors'   => 0,
 		'details'  => array(),
@@ -34,6 +35,8 @@ class Dolisync_Product_Sync_Reverse {
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/database/class-dolisync-schema.php';
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/core/class-dolisync-config.php';
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/products/class-dolisync-product-image-sync.php';
+		require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/products/class-dolisync-product-identity-resolver.php';
+		require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/products/class-dolisync-product-conflicts.php';
 
 		$this->api_client = new Dolisync_API_Client();
 		$this->db_manager = new Dolisync_DB_Manager();
@@ -126,8 +129,8 @@ class Dolisync_Product_Sync_Reverse {
 
 		$this->process_product( $product );
 		return array(
-			'success' => 0 === (int) $this->stats['errors'],
-			'message' => 0 === (int) $this->stats['errors'] ? __( 'Producto sincronizado de WooCommerce a Dolibarr.', 'dolisync' ) : __( 'No se pudo sincronizar el producto.', 'dolisync' ),
+			'success' => 0 === (int) $this->stats['errors'] && 0 === (int) $this->stats['conflicts'],
+			'message' => (int) $this->stats['conflicts'] > 0 ? __( 'Se detectó un conflicto de identidad. Revísalo en la pestaña Conflictos.', 'dolisync' ) : ( 0 === (int) $this->stats['errors'] ? __( 'Producto sincronizado de WooCommerce a Dolibarr.', 'dolisync' ) : __( 'No se pudo sincronizar el producto.', 'dolisync' ) ),
 			'stats'   => $this->stats,
 		);
 	}
@@ -137,6 +140,7 @@ class Dolisync_Product_Sync_Reverse {
 			'created'  => 0,
 			'mapped'   => 0,
 			'updated'  => 0,
+			'conflicts' => 0,
 			'skipped'  => 0,
 			'errors'   => 0,
 			'details'  => array(),
@@ -169,19 +173,24 @@ class Dolisync_Product_Sync_Reverse {
 			}
 			$is_variable_product = ! empty( $payload['variations'] );
 			$existing_relation = $this->get_relation_by_wc_product_id( $wc_product_id );
-			$dolibarr_id = (int) ( $existing_relation['dolibarr_product_id'] ?? 0 );
+			$dolibarr_id = 0;
 			$mapping_method = '';
 			$created_in_dolibarr = false;
-
-			if ( ! $dolibarr_id ) {
-				$dolibarr_id = $this->find_dolibarr_product_by_sku( $payload['sku'] );
-				$mapping_method = $dolibarr_id > 0 ? 'sku' : '';
+			$identity = Dolisync_Product_Identity_Resolver::resolve_dolibarr_product( $this->api_client, $wc_product, $existing_relation );
+			if ( 'error' === ( $identity['status'] ?? '' ) ) { throw new RuntimeException( (string) $identity['message'] ); }
+			if ( 'conflict' === ( $identity['status'] ?? '' ) ) {
+				$identity['wc_product_id'] = $wc_product_id;
+				$wc_snapshot = Dolisync_Product_Conflicts::snapshot_woocommerce( $wc_product_id );
+				$dolibarr_snapshot = Dolisync_Product_Conflicts::snapshot_dolibarr( $this->api_client, $identity['dolibarr_product_id'] ?? 0 );
+				Dolisync_Product_Conflicts::record( 'woocommerce_to_dolibarr', $identity, $wc_snapshot, $dolibarr_snapshot );
+				$this->stats['skipped']++;
+				$this->stats['conflicts']++;
+				$this->stats['details'][] = array( 'action' => 'conflict', 'message' => $identity['message'], 'wc_product_id' => $wc_product_id, 'dolibarr_product_id' => (int) ( $identity['dolibarr_product_id'] ?? 0 ) );
+				return;
 			}
-			$mapped_by_name = false;
-			if ( ! $dolibarr_id ) {
-				$dolibarr_id = $this->find_unmapped_dolibarr_product_by_name( $payload['name'] );
-				$mapped_by_name = $dolibarr_id > 0;
-				$mapping_method = $mapped_by_name ? 'name' : '';
+			if ( 'matched' === ( $identity['status'] ?? '' ) ) {
+				$dolibarr_id = (int) $identity['id'];
+				$mapping_method = 'relation' === $identity['matched_by'] ? '' : $identity['matched_by'];
 			}
 
 			$payload_hash = $this->payload_hash( $payload );

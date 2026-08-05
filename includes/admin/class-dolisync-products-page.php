@@ -15,8 +15,11 @@ class Dolisync_Products_Page {
 	public static function init() {
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/database/class-dolisync-schema.php';
 		Dolisync_Schema::ensure_ignored_items_table();
+		Dolisync_Schema::ensure_product_conflicts_table();
 		add_action( 'wp_ajax_dolisync_products_catalog', array( __CLASS__, 'ajax_catalog' ) );
 		add_action( 'wp_ajax_dolisync_product_action', array( __CLASS__, 'ajax_product_action' ) );
+		add_action( 'wp_ajax_dolisync_product_conflicts', array( __CLASS__, 'ajax_conflicts' ) );
+		add_action( 'wp_ajax_dolisync_resolve_product_conflict', array( __CLASS__, 'ajax_resolve_conflict' ) );
 	}
 
 	public static function render() {
@@ -34,6 +37,11 @@ class Dolisync_Products_Page {
 				</div>
 				<button type="button" class="button dolisync-catalog-reload"><span class="dashicons dashicons-update"></span> <?php echo esc_html__( 'Actualizar catálogo', 'dolisync' ); ?></button>
 			</div>
+			<nav class="nav-tab-wrapper dolisync-customers-tabs" aria-label="<?php echo esc_attr__( 'Secciones de productos', 'dolisync' ); ?>">
+				<button type="button" class="nav-tab nav-tab-active" data-products-tab="catalog"><?php echo esc_html__( 'Catálogo', 'dolisync' ); ?></button>
+				<button type="button" class="nav-tab" data-products-tab="conflicts"><?php echo esc_html__( 'Conflictos', 'dolisync' ); ?> <span id="dolisync-product-conflicts-count" class="dolisync-tab-count">0</span></button>
+			</nav>
+			<div id="dolisync-products-catalog-panel" class="dolisync-products-panel">
 			<section class="dolisync-page-actions" aria-labelledby="dolisync-products-sync-title">
 				<div class="dolisync-page-actions-copy">
 					<span class="dashicons dashicons-controls-repeat"></span>
@@ -68,6 +76,12 @@ class Dolisync_Products_Page {
 				<div class="dolisync-products-loading"><span class="spinner is-active"></span><?php echo esc_html__( 'Leyendo ambos catálogos…', 'dolisync' ); ?></div>
 			</div>
 			<div id="dolisync-products-pagination" class="dolisync-products-pagination"></div>
+			</div>
+			<div id="dolisync-products-conflicts-panel" class="dolisync-products-panel" hidden>
+				<div class="dolisync-conflicts-heading"><div><h2><?php echo esc_html__( 'Conflictos de identidad de productos', 'dolisync' ); ?></h2><p><?php echo esc_html__( 'Compara ambos productos y elige qué sistema debe conservarse para reconstruir la relación.', 'dolisync' ); ?></p></div><button type="button" class="button dolisync-product-conflicts-reload"><span class="dashicons dashicons-update"></span><?php echo esc_html__( 'Actualizar', 'dolisync' ); ?></button></div>
+				<div id="dolisync-product-conflicts-notice" aria-live="polite"></div>
+				<div id="dolisync-product-conflicts-table" class="dolisync-products-table-wrap"><div class="dolisync-products-loading"><span class="spinner is-active"></span><?php echo esc_html__( 'Leyendo conflictos…', 'dolisync' ); ?></div></div>
+			</div>
 		</div>
 		<?php
 	}
@@ -134,6 +148,26 @@ class Dolisync_Products_Page {
 				wp_send_json_error( array( 'message' => (string) ( $result['message'] ?? __( 'No se pudo sincronizar.', 'dolisync' ) ) ) );
 			}
 			wp_send_json_success( array( 'message' => $result['message'], 'stats' => $result['stats'] ?? array() ) );
+		} catch ( Throwable $e ) {
+			wp_send_json_error( array( 'message' => $e->getMessage() ), 500 );
+		}
+	}
+
+	public static function ajax_conflicts() {
+		self::guard_ajax();
+		require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/products/class-dolisync-product-conflicts.php';
+		$rows = Dolisync_Product_Conflicts::get_open();
+		wp_send_json_success( array( 'rows' => $rows, 'count' => count( $rows ) ) );
+	}
+
+	public static function ajax_resolve_conflict() {
+		self::guard_ajax();
+		$conflict_id = isset( $_POST['conflict_id'] ) ? absint( wp_unslash( $_POST['conflict_id'] ) ) : 0;
+		$winner = isset( $_POST['winner'] ) ? sanitize_key( wp_unslash( $_POST['winner'] ) ) : '';
+		try {
+			require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/products/class-dolisync-product-conflicts.php';
+			Dolisync_Product_Conflicts::resolve( $conflict_id, $winner );
+			wp_send_json_success( array( 'message' => __( 'Conflicto resuelto y relación de producto reconstruida.', 'dolisync' ) ) );
 		} catch ( Throwable $e ) {
 			wp_send_json_error( array( 'message' => $e->getMessage() ), 500 );
 		}

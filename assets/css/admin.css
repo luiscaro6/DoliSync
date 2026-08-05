@@ -659,6 +659,7 @@
 	flex-basis: 16px;
 	font-size: 16px;
 }
+.dolisync-customers-tabs{margin:18px 0 0}.dolisync-customers-tabs .nav-tab{cursor:pointer}.dolisync-tab-count{display:inline-grid;min-width:20px;height:20px;margin-left:5px;padding:0 5px;place-items:center;border-radius:10px;background:#e2e8f0;color:#475569;font-size:11px;line-height:20px}.nav-tab-active .dolisync-tab-count{background:#fee2e2;color:#b91c1c}.dolisync-customers-panel[hidden]{display:none!important}.dolisync-conflicts-heading{display:flex;align-items:center;justify-content:space-between;gap:20px;margin:22px 0 14px}.dolisync-conflicts-heading h2{margin:0 0 4px}.dolisync-conflicts-heading p{margin:0;color:var(--ds-muted)}.dolisync-conflicts-table td{vertical-align:top}.dolisync-conflict-card{display:grid;gap:5px;min-width:190px;padding:12px;border:1px solid #dbe2ea;border-radius:10px;background:#fff}.dolisync-conflict-card strong{color:var(--ds-ink);font-size:14px}.dolisync-conflict-card code{width:max-content}.dolisync-conflict-card span,.dolisync-conflict-card small{color:var(--ds-muted)}.dolisync-conflict-reason{max-width:300px}.dolisync-conflict-reason p{margin:9px 0;color:#7f1d1d}.dolisync-conflict-actions{min-width:190px}.dolisync-conflict-actions .button{width:100%}
 .dolisync-products-app .dolisync-page-actions-copy > .dashicons,
 .dolisync-products-app .dolisync-panel-heading > .dashicons {
 	display: grid;
@@ -697,3 +698,4 @@
 	.dolisync-settings-tabs a { white-space: nowrap; }
 	.dolisync-settings-app .dolisync-section { padding: 18px; }
 }
+.dolisync-products-panel[hidden]{display:none!important}

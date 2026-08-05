@@ -773,7 +773,51 @@ function dolisyncInitProductsCatalog() {
 		});
 	});
 
+	function productConflictCard(data, platform) {
+		data = data || {};
+		if (!data.id) { return '<div class="dolisync-product-empty"><span class="dashicons dashicons-minus"></span><strong>No disponible en ' + esc(platform) + '</strong></div>'; }
+		return '<div class="dolisync-conflict-card"><strong>' + esc(data.name || 'Sin nombre') + '</strong><code>' + esc(data.sku || 'Sin SKU') + '</code><span>ID #' + esc(data.id) + ' · ' + esc(data.type || '') + '</span><small>Precio ' + esc(data.price == null ? '—' : data.price) + ' · Stock ' + esc(data.stock == null ? '—' : data.stock) + '</small></div>';
+	}
+
+	function loadProductConflicts(showNotice) {
+		jQuery('#dolisync-product-conflicts-table').html('<div class="dolisync-products-loading"><span class="spinner is-active"></span>Leyendo conflictos…</div>');
+		jQuery.post(DoliSync.ajaxUrl, {action: 'dolisync_product_conflicts', nonce: DoliSync.nonce}).done(function (response) {
+			if (!response.success) { jQuery('#dolisync-product-conflicts-table').html('<div class="notice notice-error inline"><p>No se pudieron cargar los conflictos.</p></div>'); return; }
+			const conflicts = response.data.rows || [];
+			jQuery('#dolisync-product-conflicts-count').text(response.data.count || 0);
+			if (!conflicts.length) {
+				jQuery('#dolisync-product-conflicts-table').html('<div class="dolisync-products-zero"><span class="dashicons dashicons-yes-alt"></span><h2>No hay conflictos pendientes</h2><p>Las relaciones de productos son coherentes.</p></div>');
+			} else {
+				jQuery('#dolisync-product-conflicts-table').html('<table class="dolisync-products-table dolisync-conflicts-table"><thead><tr><th>WooCommerce</th><th>Dolibarr</th><th>Conflicto</th><th>Conservar y vincular</th></tr></thead><tbody>' + conflicts.map(function (row) {
+					const disableWoo = row.wc_data && row.wc_data.id ? '' : ' disabled';
+					const disableDoli = row.dolibarr_data && row.dolibarr_data.id ? '' : ' disabled';
+					return '<tr><td>' + productConflictCard(row.wc_data, 'WooCommerce') + '</td><td>' + productConflictCard(row.dolibarr_data, 'Dolibarr') + '</td><td><div class="dolisync-conflict-reason"><span class="dolisync-match dolisync-match-missing"><span class="dashicons dashicons-warning"></span>Revisión necesaria</span><p>' + esc(row.message) + '</p><small>' + esc(row.conflict_type) + ' · ' + esc(row.updated_at) + '</small></div></td><td><div class="dolisync-row-actions dolisync-conflict-actions dolisync-product-conflict-actions" data-conflict-id="' + esc(row.id) + '"><button class="button button-primary dolisync-resolve-product-conflict" data-winner="dolibarr"' + disableDoli + '><span class="dashicons dashicons-arrow-left-alt"></span><span>Conservar Dolibarr</span></button><button class="button dolisync-resolve-product-conflict" data-winner="woocommerce"' + disableWoo + '><span class="dashicons dashicons-arrow-right-alt"></span><span>Conservar WooCommerce</span></button></div></td></tr>';
+				}).join('') + '</tbody></table>');
+			}
+			if (showNotice) { jQuery('#dolisync-product-conflicts-notice').html('<div class="notice notice-success inline"><p>Conflictos actualizados.</p></div>'); }
+		});
+	}
+
+	jQuery(document).on('click', '[data-products-tab]', function () {
+		const tab = jQuery(this).data('products-tab');
+		$app.find('[data-products-tab]').removeClass('nav-tab-active'); jQuery(this).addClass('nav-tab-active');
+		$app.find('.dolisync-products-panel').prop('hidden', true); jQuery('#dolisync-products-' + tab + '-panel').prop('hidden', false);
+		if (tab === 'conflicts') { loadProductConflicts(false); }
+	});
+	jQuery(document).on('click', '.dolisync-product-conflicts-reload', function () { loadProductConflicts(true); });
+	jQuery(document).on('click', '.dolisync-resolve-product-conflict', function () {
+		const $button = jQuery(this), $actions = $button.closest('.dolisync-product-conflict-actions');
+		if (!window.confirm('Se reconstruirá la relación conservando el producto elegido. ¿Continuar?')) { return; }
+		$actions.find('button').prop('disabled', true); $button.addClass('is-busy');
+		jQuery.post(DoliSync.ajaxUrl, {action: 'dolisync_resolve_product_conflict', nonce: DoliSync.nonce, conflict_id: $actions.data('conflict-id'), winner: $button.data('winner')}).done(function (response) {
+			const type = response.success ? 'success' : 'error';
+			jQuery('#dolisync-product-conflicts-notice').html('<div class="notice notice-' + type + ' inline"><p>' + esc(response.data && response.data.message ? response.data.message : 'No se pudo resolver el conflicto.') + '</p></div>');
+			if (response.success) { loadProductConflicts(false); loadCatalog(false); }
+		}).always(function () { $button.removeClass('is-busy'); $actions.find('button').prop('disabled', false); });
+	});
+
 	loadCatalog(false);
+	loadProductConflicts(false);
 }
 
 jQuery(dolisyncInitProductsCatalog);
@@ -969,6 +1013,43 @@ function dolisyncInitCustomersCatalog() {
 			if (showNotice) { jQuery('#dolisync-customers-notice').html('<div class="notice notice-success inline"><p>Clientes actualizados.</p></div>'); }
 		}).fail(function (xhr) { jQuery('#dolisync-customers-table').html('<div class="dolisync-products-zero"><span class="dashicons dashicons-warning"></span><h2>No se pudieron cargar los clientes</h2><p>' + dolisyncAjaxError(xhr, 'Inténtalo de nuevo.') + '</p></div>'); });
 	}
+	function conflictCard(data, system) {
+		data = data || {};
+		return '<div class="dolisync-conflict-card dolisync-conflict-' + system + '"><strong>' + esc(data.name || 'Sin nombre') + '</strong><code>' + esc(data.document_id || data.idprof1 || data.siren || 'Sin documento') + '</code><span>' + esc(data.email || 'Sin correo') + '</span><small>ID #' + esc(data.id || '—') + (data.phone ? ' · ' + esc(data.phone) : '') + '</small></div>';
+	}
+	function loadConflicts(showNotice) {
+		jQuery('#dolisync-conflicts-table').html('<div class="dolisync-products-loading"><span class="spinner is-active"></span>Leyendo conflictos…</div>');
+		jQuery.post(DoliSync.ajaxUrl, {action: 'dolisync_contact_conflicts', nonce: DoliSync.nonce}).done(function (response) {
+			if (!response.success) { jQuery('#dolisync-conflicts-table').html('<div class="dolisync-products-zero"><span class="dashicons dashicons-warning"></span><h2>No se pudieron cargar los conflictos</h2></div>'); return; }
+			const conflicts = response.data.rows || [];
+			jQuery('#dolisync-conflicts-count').text(response.data.count || 0);
+			if (!conflicts.length) {
+				jQuery('#dolisync-conflicts-table').html('<div class="dolisync-products-zero"><span class="dashicons dashicons-yes-alt"></span><h2>No hay conflictos pendientes</h2><p>Las identidades detectadas están vinculadas sin discrepancias.</p></div>');
+			} else {
+				jQuery('#dolisync-conflicts-table').html('<table class="dolisync-products-table dolisync-conflicts-table"><thead><tr><th>WooCommerce</th><th>Dolibarr</th><th>Conflicto</th><th>Conservar y vincular</th></tr></thead><tbody>' + conflicts.map(function (row) {
+					return '<tr><td>' + conflictCard(row.wp_data, 'woo') + '</td><td>' + conflictCard(row.dolibarr_data, 'dolibarr') + '</td><td><div class="dolisync-conflict-reason"><span class="dolisync-match dolisync-match-missing"><span class="dashicons dashicons-warning"></span>Revisión necesaria</span><p>' + esc(row.message) + '</p><small>Detectado: ' + esc(row.updated_at) + '</small></div></td><td><div class="dolisync-row-actions dolisync-conflict-actions" data-conflict-id="' + esc(row.id) + '"><button class="button button-primary dolisync-resolve-conflict" data-winner="dolibarr"><span class="dashicons dashicons-arrow-left-alt"></span><span>Conservar Dolibarr</span></button><button class="button dolisync-resolve-conflict" data-winner="woocommerce"><span class="dashicons dashicons-arrow-right-alt"></span><span>Conservar WooCommerce</span></button></div></td></tr>';
+				}).join('') + '</tbody></table>');
+			}
+			if (showNotice) { jQuery('#dolisync-conflicts-notice').html('<div class="notice notice-success inline"><p>Conflictos actualizados.</p></div>'); }
+		}).fail(function (xhr) { jQuery('#dolisync-conflicts-table').html('<div class="notice notice-error inline"><p>' + dolisyncAjaxError(xhr, 'No se pudieron cargar los conflictos.') + '</p></div>'); });
+	}
+	jQuery(document).on('click', '.dolisync-customers-tabs [data-customers-tab]', function () {
+		const tab = jQuery(this).data('customers-tab');
+		jQuery('.dolisync-customers-tabs .nav-tab').removeClass('nav-tab-active'); jQuery(this).addClass('nav-tab-active');
+		jQuery('.dolisync-customers-panel').prop('hidden', true); jQuery('#dolisync-customers-' + tab + '-panel').prop('hidden', false);
+		if (tab === 'conflicts') { loadConflicts(false); }
+	});
+	jQuery(document).on('click', '.dolisync-conflicts-reload', function () { loadConflicts(true); });
+	jQuery(document).on('click', '.dolisync-resolve-conflict', function () {
+		const $button = jQuery(this), $actions = $button.closest('.dolisync-conflict-actions'), winner = $button.data('winner');
+		if (!window.confirm('Se sobrescribirán los datos del otro sistema y ambos registros quedarán vinculados. ¿Continuar?')) { return; }
+		$actions.find('.button').prop('disabled', true); $button.addClass('is-busy');
+		jQuery.post(DoliSync.ajaxUrl, {action: 'dolisync_resolve_contact_conflict', nonce: DoliSync.nonce, conflict_id: $actions.data('conflict-id'), winner: winner}).done(function (response) {
+			const type = response.success ? 'success' : 'error';
+			jQuery('#dolisync-conflicts-notice').html('<div class="notice notice-' + type + ' inline"><p>' + esc(response.data && response.data.message ? response.data.message : 'No se pudo resolver el conflicto.') + '</p></div>');
+			if (response.success) { loadConflicts(false); loadCustomers(false); }
+		}).fail(function (xhr) { jQuery('#dolisync-conflicts-notice').html('<div class="notice notice-error inline"><p>' + dolisyncAjaxError(xhr, 'No se pudo resolver el conflicto.') + '</p></div>'); }).always(function () { $button.removeClass('is-busy'); $actions.find('.button').prop('disabled', false); });
+	});
 	jQuery(document).on('input', '#dolisync-customers-search', applySearch);
 	jQuery(document).on('change', '#dolisync-customers-status-filter', applySearch);
 	jQuery(document).on('click', '#dolisync-customers-pagination button', function () { page = Number(jQuery(this).data('page')) || 1; render(); });
@@ -983,6 +1064,7 @@ function dolisyncInitCustomersCatalog() {
 		}).fail(function (xhr) { jQuery('#dolisync-customers-notice').html('<div class="notice notice-error inline"><p>' + dolisyncAjaxError(xhr, 'No se pudo completar la acción.') + '</p></div>'); }).always(function () { $button.removeClass('is-busy'); $actions.find('.button').prop('disabled', false); });
 	});
 	loadCustomers(false);
+	loadConflicts(false);
 }
 
 jQuery(dolisyncInitCustomersCatalog);

@@ -24,6 +24,8 @@ adjuntarlo al correo del comprador.
 - Sincroniza productos de WooCommerce a Dolibarr y de Dolibarr a WooCommerce.
 - Trabaja por páginas para manejar catálogos grandes.
 - Mantiene relaciones persistentes entre los identificadores de ambos sistemas.
+- Detiene coincidencias ambiguas o relaciones rotas y permite resolverlas desde
+  la pestaña **Productos > Conflictos**, eligiendo qué sistema se conserva.
 - Crea y actualiza productos simples, variables, categorías, atributos,
   variaciones, precios, descripciones e imágenes.
 - Omite los registros que no han cambiado para reducir llamadas y escrituras.
@@ -198,7 +200,9 @@ El plugin crea tablas propias usando el prefijo configurado en WordPress:
 | `dolisync_actions` | Historial funcional y resúmenes |
 | `dolisync_error_stats` | Estadísticas de errores operativos |
 | `dolisync_contact_relations` | Relación entre clientes y terceros |
+| `dolisync_contact_conflicts` | Conflictos de identidad pendientes y su resolución |
 | `dolisync_product_relations` | Relación entre productos |
+| `dolisync_product_conflicts` | Conflictos de identidad y relaciones de producto rotas |
 | `dolisync_product_variation_relations` | Relación entre variaciones |
 | `dolisync_product_category_mappings` | Mapeo de categorías |
 | `dolisync_product_category_relations` | Relaciones auxiliares de categorías |

@@ -17,6 +17,7 @@ class Dolisync_Product_Sync {
 	private $stats = array(
 		'created'  => 0,
 		'updated'  => 0,
+		'conflicts' => 0,
 		'skipped'  => 0,
 		'errors'   => 0,
 		'details'  => array(),
@@ -32,6 +33,8 @@ class Dolisync_Product_Sync {
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/database/class-dolisync-db-manager.php';
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/database/class-dolisync-schema.php';
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/products/class-dolisync-product-image-sync.php';
+		require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/products/class-dolisync-product-identity-resolver.php';
+		require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/products/class-dolisync-product-conflicts.php';
 
 		$this->api_client = new Dolisync_API_Client();
 		$this->db_manager = new Dolisync_DB_Manager();
@@ -102,7 +105,7 @@ class Dolisync_Product_Sync {
 			if ( null === $aggregate ) {
 				$aggregate = $result;
 			} else {
-				foreach ( array( 'created', 'mapped', 'updated', 'skipped', 'errors' ) as $key ) {
+				foreach ( array( 'created', 'mapped', 'updated', 'conflicts', 'skipped', 'errors' ) as $key ) {
 					$aggregate['stats'][ $key ] = (int) ( $aggregate['stats'][ $key ] ?? 0 ) + (int) ( $result['stats'][ $key ] ?? 0 );
 				}
 				$aggregate['stats']['details'] = array_merge( $aggregate['stats']['details'], $result['stats']['details'] );
@@ -138,8 +141,8 @@ class Dolisync_Product_Sync {
 		$this->process_product( $product );
 
 		return array(
-			'success' => 0 === (int) $this->stats['errors'],
-			'message' => 0 === (int) $this->stats['errors'] ? __( 'Producto sincronizado de Dolibarr a WooCommerce.', 'dolisync' ) : __( 'No se pudo sincronizar el producto.', 'dolisync' ),
+			'success' => 0 === (int) $this->stats['errors'] && 0 === (int) $this->stats['conflicts'],
+			'message' => (int) $this->stats['conflicts'] > 0 ? __( 'Se detectó un conflicto de identidad. Revísalo en la pestaña Conflictos.', 'dolisync' ) : ( 0 === (int) $this->stats['errors'] ? __( 'Producto sincronizado de Dolibarr a WooCommerce.', 'dolisync' ) : __( 'No se pudo sincronizar el producto.', 'dolisync' ) ),
 			'stats'   => $this->stats,
 		);
 	}
@@ -701,6 +704,7 @@ class Dolisync_Product_Sync {
 			'created'  => 0,
 			'mapped'   => 0,
 			'updated'  => 0,
+			'conflicts' => 0,
 			'skipped'  => 0,
 			'errors'   => 0,
 			'details'  => array(),
@@ -794,27 +798,25 @@ class Dolisync_Product_Sync {
 			$wc_product = null;
 			$is_variable_product = ! empty( $payload['variations'] );
 			$wc_product_id = 0;
-
-			if ( $existing_relation ) {
-				$wc_product_id = (int) ( $existing_relation['wc_product_id'] ?? 0 );
-				$wc_product = wc_get_product( $wc_product_id );
-			}
-
 			$mapped_by_sku = false;
 			$mapped_by_name = false;
-			if ( ! $wc_product ) {
-				$wc_product = $this->find_unmapped_woocommerce_product_by_sku( $payload['sku'] );
-				if ( $wc_product ) {
-					$wc_product_id = (int) $wc_product->get_id();
-					$mapped_by_sku = true;
-				}
+			$identity = Dolisync_Product_Identity_Resolver::resolve_woocommerce_product( $dolibarr_product, $existing_relation );
+			if ( 'error' === ( $identity['status'] ?? '' ) ) { throw new RuntimeException( (string) $identity['message'] ); }
+			if ( 'conflict' === ( $identity['status'] ?? '' ) ) {
+				$identity['dolibarr_product_id'] = $dolibarr_product_id;
+				$wc_snapshot = Dolisync_Product_Conflicts::snapshot_woocommerce( $identity['wc_product_id'] ?? 0 );
+				$dolibarr_snapshot = Dolisync_Product_Conflicts::snapshot_dolibarr( $this->api_client, $dolibarr_product_id, $dolibarr_product );
+				Dolisync_Product_Conflicts::record( 'dolibarr_to_woocommerce', $identity, $wc_snapshot, $dolibarr_snapshot );
+				$this->stats['skipped']++;
+				$this->stats['conflicts']++;
+				$this->stats['details'][] = array( 'action' => 'conflict', 'message' => $identity['message'], 'dolibarr_product_id' => $dolibarr_product_id, 'wc_product_id' => (int) ( $identity['wc_product_id'] ?? 0 ) );
+				return;
 			}
-			if ( ! $wc_product ) {
-				$wc_product = $this->find_unmapped_woocommerce_product_by_name( $payload['name'] );
-				if ( $wc_product ) {
-					$wc_product_id = (int) $wc_product->get_id();
-					$mapped_by_name = true;
-				}
+			if ( 'matched' === ( $identity['status'] ?? '' ) ) {
+				$wc_product_id = (int) $identity['id'];
+				$wc_product = wc_get_product( $wc_product_id );
+				$mapped_by_sku = 'sku' === $identity['matched_by'];
+				$mapped_by_name = 'name' === $identity['matched_by'];
 			}
 
 			if ( ! $wc_product ) {

@@ -23,6 +23,7 @@ class Dolisync_Contact_Sync {
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/core/class-dolisync-action-logger.php';
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/api/class-dolisync-api-client.php';
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/database/class-dolisync-db-manager.php';
+		require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/contacts/class-dolisync-contact-identity-resolver.php';
 
 		$this->api_client = new Dolisync_API_Client();
 		$this->db_manager = new Dolisync_DB_Manager();
@@ -250,12 +251,21 @@ class Dolisync_Contact_Sync {
 
 		// Verificar cambios de email
 		$wp_user = get_userdata( $wp_user_id );
+		$current_dni = Dolisync_Contact_Identity_Resolver::normalize_document( get_user_meta( $wp_user_id, 'dolisync_document_id', true ) );
+		if ( $current_dni !== Dolisync_Contact_Identity_Resolver::normalize_document( $dni ) || (string) $existing_relation->dni !== $dni ) {
+			$changes['dni'] = $dni;
+			update_user_meta( $wp_user_id, 'dolisync_document_id', $dni );
+		}
+
 		if ( $email !== (string) $existing_relation->email || ( $wp_user && $email !== (string) $wp_user->user_email ) ) {
 			$changes['email'] = $email;
-			wp_update_user( array(
+			$email_update = wp_update_user( array(
 				'ID'         => $wp_user_id,
 				'user_email' => $email,
 			) );
+			if ( is_wp_error( $email_update ) ) {
+				throw new Exception( $email_update->get_error_message() );
+			}
 		}
 
 		// Verificar cambios en nombres
@@ -330,6 +340,7 @@ class Dolisync_Contact_Sync {
 				function( $key, $value ) {
 					$field_name = array(
 						'email' => 'correo electrónico',
+						'dni' => 'documento fiscal',
 						'first_name' => 'nombre',
 						'billing_country' => 'país',
 					)[ $key ] ?? $key;
@@ -360,13 +371,22 @@ class Dolisync_Contact_Sync {
 	 */
 	private function create_new_contact( $dolibarr_id, $dni, $email, $full_name, $dolibarr_contact = null ) {
 		list( $first_name, $last_name ) = $this->split_name( (array) $dolibarr_contact );
-		$existing_user = $email ? get_user_by( 'email', sanitize_email( $email ) ) : false;
+		$identity = Dolisync_Contact_Identity_Resolver::resolve_wp_user( $dni, $email );
+		if ( 'conflict' === $identity['status'] ) {
+			require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/contacts/class-dolisync-contact-conflicts.php';
+			$wp_conflict_id = (int) ( $identity['document_match_id'] ?? $identity['email_match_id'] ?? 0 );
+			Dolisync_Contact_Conflicts::record( 'dolibarr_to_woo', 'identity', $wp_conflict_id, $dolibarr_id, Dolisync_Contact_Conflicts::snapshot_wp_user( $wp_conflict_id ), (array) $dolibarr_contact, (string) $identity['message'] );
+			throw new Exception( (string) $identity['message'] );
+		}
+		$existing_user = 'matched' === $identity['status'] ? get_user_by( 'id', (int) $identity['id'] ) : false;
 		$username = '';
 
 		if ( $existing_user ) {
 			$wp_user_id = (int) $existing_user->ID;
 			$linked_relation = $this->get_relation_by_wp_user_id( $wp_user_id );
 			if ( $linked_relation && (int) $linked_relation->dolibarr_contact_id !== $dolibarr_id ) {
+				require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/contacts/class-dolisync-contact-conflicts.php';
+				Dolisync_Contact_Conflicts::record( 'dolibarr_to_woo', 'existing_relation', $wp_user_id, $dolibarr_id, Dolisync_Contact_Conflicts::snapshot_wp_user( $wp_user_id ), (array) $dolibarr_contact, sprintf( __( 'El usuario WooCommerce %1$d ya está vinculado al tercero Dolibarr %2$d.', 'dolisync' ), $wp_user_id, (int) $linked_relation->dolibarr_contact_id ) );
 				throw new Exception( sprintf( 'El usuario WooCommerce %d ya está vinculado al tercero Dolibarr %d.', $wp_user_id, (int) $linked_relation->dolibarr_contact_id ) );
 			}
 		} else {
@@ -385,7 +405,16 @@ class Dolisync_Contact_Sync {
 		update_user_meta( $wp_user_id, 'shipping_first_name', $first_name );
 		update_user_meta( $wp_user_id, 'shipping_last_name', $last_name );
 		update_user_meta( $wp_user_id, 'dolisync_document_id', $dni );
-		wp_update_user( array( 'ID' => $wp_user_id, 'display_name' => $full_name ) );
+		$updated_user = wp_update_user(
+			array(
+				'ID'           => $wp_user_id,
+				'display_name' => $full_name,
+				'user_email'   => sanitize_email( $email ),
+			)
+		);
+		if ( is_wp_error( $updated_user ) ) {
+			throw new Exception( $updated_user->get_error_message() );
+		}
 
 		// Intentar sincronizar país desde Dolibarr si viene en los datos (billing_country en Woo)
 		$country = '';
