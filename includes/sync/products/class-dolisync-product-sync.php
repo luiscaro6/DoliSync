@@ -1230,7 +1230,7 @@ class Dolisync_Product_Sync {
 			}
 		}
 
-		$existing_variations = $wpdb->get_col(
+		$existing_variations = (array) $wpdb->get_col(
 			$wpdb->prepare( "SELECT wc_variation_id FROM {$table} WHERE wc_product_id = %d", $wc_product_id )
 		); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 		$parent_product = wc_get_product( $wc_product_id );

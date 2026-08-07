@@ -714,3 +714,10 @@
 .dolisync-email-history-item div { display: grid; gap: 2px; }
 .dolisync-email-history-item strong { font-size: 12px; line-height: 1.25; }
 .dolisync-email-history-item small { margin: 0 !important; font-size: 11px; }
+.dolisync-simulation-panel .dolisync-products-summary { margin: 16px 0; }
+.dolisync-simulation-results td > small,
+.dolisync-simulation-results td > strong { display: block; }
+.dolisync-simulation-results td > small { margin-top: 4px; color: #646970; }
+.dolisync-simulation-item-result { display: block; margin-top: 6px; font-size: 12px; color: #646970; }
+.dolisync-simulation-results tr.dolisync-row-complete { background: #f0fdf4; opacity: .78; }
+.dolisync-simulation-results tr.dolisync-row-complete .dolisync-simulation-item-result { color: #166534; font-weight: 600; }

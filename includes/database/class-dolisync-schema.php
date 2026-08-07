@@ -471,7 +471,7 @@ class Dolisync_Schema {
 
         self::ensure_product_variation_relations_table();
         $table = $wpdb->prefix . 'dolisync_product_variation_relations';
-		$columns = $wpdb->get_col( "DESCRIBE {$table}", 0 ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		$columns = (array) $wpdb->get_col( "DESCRIBE {$table}", 0 ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 
         if ( ! in_array( 'dolibarr_combination_id', (array) $columns, true ) ) {
 			self::execute_schema_query( "ALTER TABLE {$table} ADD COLUMN dolibarr_combination_id BIGINT(20) UNSIGNED NULL DEFAULT NULL AFTER dolibarr_variation_id, ADD KEY dolibarr_combination_id (dolibarr_combination_id)", 'añadir trazabilidad de combinaciones' );
@@ -492,7 +492,7 @@ class Dolisync_Schema {
             return;
         }
 
-        $columns = $wpdb->get_col( "DESCRIBE {$table}", 0 ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $columns = (array) $wpdb->get_col( "DESCRIBE {$table}", 0 ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 
 		if ( ! in_array( 'retain_data_on_uninstall', $columns, true ) ) {
 			self::execute_schema_query( "ALTER TABLE {$table} ADD COLUMN `retain_data_on_uninstall` TINYINT(1) NOT NULL DEFAULT 1 AFTER `log_retention_days`", 'añadir preferencia de conservación' );
@@ -548,7 +548,7 @@ class Dolisync_Schema {
             return;
         }
 
-        $columns = $wpdb->get_col( "DESCRIBE {$table}", 0 ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $columns = (array) $wpdb->get_col( "DESCRIBE {$table}", 0 ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 
         $queries = array();
 

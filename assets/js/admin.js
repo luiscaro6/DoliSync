@@ -1154,19 +1154,68 @@ function dolisyncInitCustomersCatalog() {
 
 jQuery(dolisyncInitCustomersCatalog);
 
-// Simulación global de sincronizaciones: este flujo solo realiza lecturas.
-jQuery(document).on('click', '.dolisync-preview-sync', function () {
+function dolisyncSimulationContext($panel) {
+	const $app = $panel.closest('.dolisync-products-app');
+	const $tab = $app.find('.nav-tab-active[data-simulation-resource]');
+	return {resource: String($tab.data('simulation-resource') || ''), direction: String($tab.data('simulation-direction') || '')};
+}
+
+function dolisyncRenderSimulation($panel, items, summary) {
+	const esc = function (value) { return jQuery('<div>').text(value == null ? '' : value).html(); };
+	$panel.data('simulation-items', items);
+	$panel.find('.dolisync-simulation-summary').html('<span><strong>' + (summary.total || 0) + '</strong> cambios</span><span><strong>' + (summary.create || 0) + '</strong> altas</span><span><strong>' + (summary.update || 0) + '</strong> actualizaciones</span>');
+	$panel.find('.dolisync-apply-all-simulation').prop('disabled', !items.length);
+	if (!items.length) {
+		$panel.find('.dolisync-simulation-table').html('<div class="dolisync-products-zero"><span class="dashicons dashicons-yes-alt"></span><h2>Todo está actualizado</h2><p>No se han detectado cambios para esta dirección.</p></div>');
+		return;
+	}
+	$panel.find('.dolisync-simulation-table').html('<table class="dolisync-products-table dolisync-simulation-results"><thead><tr><th>Elemento</th><th>Operación</th><th>Cambios previstos</th><th>Acción</th></tr></thead><tbody>' + items.map(function (item, index) {
+		return '<tr data-index="' + index + '"><td><strong>' + esc(item.label) + '</strong><small>' + esc(item.reference || '') + '</small></td><td><span class="dolisync-match ' + (item.action === 'create' ? 'dolisync-match-ok' : 'dolisync-match-warning') + '">' + (item.action === 'create' ? 'Crear' : 'Actualizar') + '</span></td><td>' + esc((item.differences || []).join(', ')) + '</td><td><button type="button" class="button button-primary dolisync-apply-simulation-item">Enviar</button><span class="dolisync-simulation-item-result"></span></td></tr>';
+	}).join('') + '</tbody></table>');
+}
+
+jQuery(document).on('click', '.dolisync-run-simulation', function () {
 	const $button = jQuery(this).prop('disabled', true).addClass('is-busy');
-	const resource = String($button.data('resource') || '');
-	const direction = String($button.data('direction') || '');
-	jQuery.post(DoliSync.ajaxUrl, {action: 'dolisync_dry_run', nonce: DoliSync.nonce, resource: resource, direction: direction}).done(function (response) {
-		if (!response.success) { window.alert(response.data && response.data.message ? response.data.message : 'No se pudo completar la simulación.'); return; }
-		const s = response.data.summary || {};
-		const warnings = (response.data.warnings || []).map(function (item) { return '\n• ' + item; }).join('');
-		window.alert('Simulación de solo lectura\n\nCrear: ' + (s.create || 0) + '\nActualizar: ' + (s.update || 0) + '\nOmitir: ' + (s.skip || 0) + '\nConflictos: ' + (s.conflicts || 0) + '\nAdvertencias: ' + (s.warnings || 0) + warnings + '\n\nNo se ha modificado ningún dato.');
+	const $panel = $button.closest('.dolisync-simulation-panel');
+	const context = dolisyncSimulationContext($panel);
+	const action = context.resource === 'products' ? 'dolisync_product_simulation' : 'dolisync_customer_simulation';
+	$panel.find('.dolisync-simulation-notice').empty();
+	$panel.find('.dolisync-simulation-table').html('<div class="dolisync-products-loading"><span class="spinner is-active"></span>Calculando cambios…</div>');
+	jQuery.post(DoliSync.ajaxUrl, {action: action, nonce: DoliSync.nonce, direction: context.direction}).done(function (response) {
+		if (!response.success) { $panel.find('.dolisync-simulation-table').html('<div class="notice notice-error inline"><p>' + (response.data && response.data.message ? response.data.message : 'No se pudo simular.') + '</p></div>'); return; }
+		dolisyncRenderSimulation($panel, response.data.items || [], response.data.summary || {});
 	}).fail(function (xhr) {
-		window.alert(dolisyncAjaxError(xhr, 'No se pudo completar la simulación.'));
+		$panel.find('.dolisync-simulation-table').html('<div class="notice notice-error inline"><p>' + dolisyncAjaxError(xhr, 'No se pudo simular.') + '</p></div>');
 	}).always(function () { $button.prop('disabled', false).removeClass('is-busy'); });
+});
+
+function dolisyncApplySimulationItem($panel, $row) {
+	const deferred = jQuery.Deferred();
+	const items = $panel.data('simulation-items') || [];
+	const item = items[Number($row.data('index'))];
+	const context = dolisyncSimulationContext($panel);
+	if (!item) { return deferred.reject().promise(); }
+	const payload = {nonce: DoliSync.nonce};
+	if (context.resource === 'products') {
+		payload.action = 'dolisync_product_action'; payload.operation = context.direction === 'dolibarr_to_woocommerce' ? 'dolibarr_to_woo' : 'woo_to_dolibarr'; payload.wc_id = item.wc_id; payload.dolibarr_id = item.dolibarr_id;
+	} else {
+		payload.action = 'dolisync_customer_action'; payload.operation = context.direction === 'dolibarr_to_woocommerce' ? 'dolibarr_to_woo' : 'sync'; payload.user_id = item.user_id; payload.dolibarr_id = item.dolibarr_id;
+	}
+	const $button = $row.find('.dolisync-apply-simulation-item').prop('disabled', true).addClass('is-busy');
+	jQuery.post(DoliSync.ajaxUrl, payload).done(function (response) {
+		if (!response.success) { $row.find('.dolisync-simulation-item-result').text(response.data && response.data.message ? response.data.message : 'Error'); deferred.reject(); return; }
+		$row.addClass('dolisync-row-complete'); $row.find('.dolisync-simulation-item-result').text('✓ Enviado'); deferred.resolve();
+	}).fail(function (xhr) { $row.find('.dolisync-simulation-item-result').text(dolisyncAjaxError(xhr, 'Error')); deferred.reject(); }).always(function () { $button.removeClass('is-busy'); });
+	return deferred.promise();
+}
+
+jQuery(document).on('click', '.dolisync-apply-simulation-item', function () { dolisyncApplySimulationItem(jQuery(this).closest('.dolisync-simulation-panel'), jQuery(this).closest('tr')); });
+jQuery(document).on('click', '.dolisync-apply-all-simulation', function () {
+	const $button = jQuery(this); const $panel = $button.closest('.dolisync-simulation-panel'); const rows = $panel.find('tbody tr').not('.dolisync-row-complete').toArray();
+	if (!rows.length || !window.confirm('¿Enviar los ' + rows.length + ' cambios pendientes?')) { return; }
+	$button.prop('disabled', true).addClass('is-busy'); let index = 0, errors = 0;
+	const next = function () { if (index >= rows.length) { $button.removeClass('is-busy').prop('disabled', errors === 0); $panel.find('.dolisync-simulation-notice').html('<div class="notice notice-' + (errors ? 'warning' : 'success') + ' inline"><p>Proceso terminado: ' + (rows.length - errors) + ' enviados, ' + errors + ' errores.</p></div>'); return; } dolisyncApplySimulationItem($panel, jQuery(rows[index++])).fail(function () { errors++; }).always(next); };
+	next();
 });
 
 jQuery(document).on('click', '#dolisync-copy-diagnostic', function () {
@@ -1181,35 +1230,3 @@ jQuery(document).on('click', '#dolisync-copy-diagnostic', function () {
 		}
 	}).always(function () { $button.prop('disabled', false); });
 });
-
-// Antes de una sincronización masiva, obliga a revisar una simulación reciente.
-(function () {
-	const targets = {
-		'dolisync-sync-stock': ['stock', 'dolibarr_to_woocommerce'],
-		'dolisync-sync-products-dolibarr-to-woo': ['products', 'dolibarr_to_woocommerce'],
-		'dolisync-sync-products-woo-to-dolibarr': ['products', 'woocommerce_to_dolibarr'],
-		'dolisync-sync-dolibarr-to-woo': ['contacts', 'dolibarr_to_woocommerce'],
-		'dolisync-sync-woo-to-dolibarr': ['contacts', 'woocommerce_to_dolibarr']
-	};
-	document.addEventListener('click', function (event) {
-		const button = event.target.closest ? event.target.closest('button[id]') : null;
-		if (!button || !targets[button.id] || button.dataset.dolisyncPreviewApproved === '1') { return; }
-		event.preventDefault();
-		event.stopImmediatePropagation();
-		const target = targets[button.id];
-		button.disabled = true;
-		jQuery.post(DoliSync.ajaxUrl, {action: 'dolisync_dry_run', nonce: DoliSync.nonce, resource: target[0], direction: target[1]}).done(function (response) {
-			if (!response.success) { window.alert(response.data && response.data.message ? response.data.message : 'No se pudo simular la sincronización.'); return; }
-			const s = response.data.summary || {};
-			const message = 'Revisión previa (sin cambios)\n\nCrear: ' + (s.create || 0) + '\nActualizar: ' + (s.update || 0) + '\nOmitir: ' + (s.skip || 0) + '\nConflictos: ' + (s.conflicts || 0) + '\nAdvertencias: ' + (s.warnings || 0) + '\n\n¿Ejecutar ahora la sincronización?';
-			if (window.confirm(message)) {
-				button.dataset.dolisyncPreviewApproved = '1';
-				button.disabled = false;
-				button.click();
-				window.setTimeout(function () { delete button.dataset.dolisyncPreviewApproved; }, 1000);
-			}
-		}).fail(function (xhr) {
-			window.alert(dolisyncAjaxError(xhr, 'No se pudo simular la sincronización.'));
-		}).always(function () { button.disabled = false; });
-	}, true);
-}());

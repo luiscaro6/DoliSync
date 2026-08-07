@@ -884,7 +884,7 @@ class Dolisync_Settings_Page {
 		}
 
 		// Comprobar columnas disponibles para construir SELECT seguro
-		$columns = $wpdb->get_col( "DESCRIBE {$table}", 0 ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		$columns = (array) $wpdb->get_col( "DESCRIBE {$table}", 0 ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 		$select_fields = array( 'dolibarr_contact_id', 'wp_user_id', 'dni', 'email', 'first_name', 'last_name', 'synced_at' );
 		$has_first_synced = in_array( 'first_synced_at', $columns, true );
 		$has_source = in_array( 'source', $columns, true );

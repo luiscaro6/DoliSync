@@ -18,6 +18,7 @@ class Dolisync_Customers_Page {
 		add_action( 'wp_ajax_dolisync_customer_action', array( __CLASS__, 'ajax_action' ) );
 		add_action( 'wp_ajax_dolisync_contact_conflicts', array( __CLASS__, 'ajax_conflicts' ) );
 		add_action( 'wp_ajax_dolisync_resolve_contact_conflict', array( __CLASS__, 'ajax_resolve_conflict' ) );
+		add_action( 'wp_ajax_dolisync_customer_simulation', array( __CLASS__, 'ajax_simulation' ) );
 	}
 
 	public static function render() {
@@ -38,6 +39,8 @@ class Dolisync_Customers_Page {
 			<nav class="nav-tab-wrapper dolisync-customers-tabs" aria-label="<?php echo esc_attr__( 'Secciones de clientes', 'dolisync' ); ?>">
 				<button type="button" class="nav-tab nav-tab-active" data-customers-tab="catalog"><?php echo esc_html__( 'Clientes', 'dolisync' ); ?></button>
 				<button type="button" class="nav-tab" data-customers-tab="conflicts"><?php echo esc_html__( 'Conflictos', 'dolisync' ); ?> <span id="dolisync-conflicts-count" class="dolisync-tab-count">0</span></button>
+				<button type="button" class="nav-tab" data-customers-tab="simulation-dolibarr" data-simulation-resource="contacts" data-simulation-direction="dolibarr_to_woocommerce"><?php echo esc_html__( 'Simulación Doli → Woo', 'dolisync' ); ?></button>
+				<button type="button" class="nav-tab" data-customers-tab="simulation-woo" data-simulation-resource="contacts" data-simulation-direction="woocommerce_to_dolibarr"><?php echo esc_html__( 'Simulación Woo → Doli', 'dolisync' ); ?></button>
 			</nav>
 			<div id="dolisync-customers-catalog-panel" class="dolisync-customers-panel">
 			<section class="dolisync-page-actions" aria-labelledby="dolisync-customers-sync-title">
@@ -47,9 +50,7 @@ class Dolisync_Customers_Page {
 				</div>
 				<div class="dolisync-page-actions-buttons">
 					<button type="button" class="button button-primary" id="dolisync-sync-dolibarr-to-woo" data-nonce="<?php echo esc_attr( $nonce ); ?>"><?php echo esc_html__( 'Dolibarr → WooCommerce', 'dolisync' ); ?></button>
-					<button type="button" class="button dolisync-preview-sync" data-resource="contacts" data-direction="dolibarr_to_woocommerce"><?php echo esc_html__( 'Simular Doli → Woo', 'dolisync' ); ?></button>
 					<button type="button" class="button" id="dolisync-sync-woo-to-dolibarr" data-nonce="<?php echo esc_attr( $nonce ); ?>"><?php echo esc_html__( 'WooCommerce → Dolibarr', 'dolisync' ); ?></button>
-					<button type="button" class="button dolisync-preview-sync" data-resource="contacts" data-direction="woocommerce_to_dolibarr"><?php echo esc_html__( 'Simular Woo → Doli', 'dolisync' ); ?></button>
 				</div>
 			</section>
 			<div id="dolisync-sync-result" class="dolisync-page-action-result" aria-live="polite"></div>
@@ -67,8 +68,19 @@ class Dolisync_Customers_Page {
 				<div id="dolisync-conflicts-notice" aria-live="polite"></div>
 				<div id="dolisync-conflicts-table" class="dolisync-products-table-wrap"><div class="dolisync-products-loading"><span class="spinner is-active"></span><?php echo esc_html__( 'Leyendo conflictos…', 'dolisync' ); ?></div></div>
 			</div>
+			<?php self::render_simulation_panel( 'simulation-dolibarr', __( 'Dolibarr → WooCommerce', 'dolisync' ), __( 'Revisa los clientes que se crearían o actualizarían en WooCommerce.', 'dolisync' ) ); ?>
+			<?php self::render_simulation_panel( 'simulation-woo', __( 'WooCommerce → Dolibarr', 'dolisync' ), __( 'Revisa los terceros que se crearían o actualizarían en Dolibarr.', 'dolisync' ) ); ?>
 		</div>
 		<?php
+	}
+
+	private static function render_simulation_panel( $id, $title, $description ) {
+		?>
+		<div id="dolisync-customers-<?php echo esc_attr( $id ); ?>-panel" class="dolisync-customers-panel dolisync-simulation-panel" hidden>
+			<div class="dolisync-conflicts-heading"><div><h2><?php echo esc_html( $title ); ?></h2><p><?php echo esc_html( $description ); ?></p></div><div class="dolisync-page-actions-buttons"><button type="button" class="button button-primary dolisync-run-simulation"><?php echo esc_html__( 'Simular', 'dolisync' ); ?></button><button type="button" class="button dolisync-apply-all-simulation" disabled><?php echo esc_html__( 'Enviar todos', 'dolisync' ); ?></button></div></div>
+			<div class="dolisync-simulation-notice" aria-live="polite"></div><div class="dolisync-simulation-summary dolisync-products-summary"></div>
+			<div class="dolisync-simulation-table dolisync-products-table-wrap"><div class="dolisync-products-zero"><span class="dashicons dashicons-search"></span><h2><?php echo esc_html__( 'Simulación pendiente', 'dolisync' ); ?></h2><p><?php echo esc_html__( 'Pulsa Simular para calcular los posibles cambios. No se modificará ningún dato.', 'dolisync' ); ?></p></div></div>
+		</div><?php
 	}
 
 	public static function ajax_catalog() {
@@ -90,8 +102,9 @@ class Dolisync_Customers_Page {
 	public static function ajax_action() {
 		self::guard();
 		$user_id = isset( $_POST['user_id'] ) ? absint( wp_unslash( $_POST['user_id'] ) ) : 0;
+		$dolibarr_id = isset( $_POST['dolibarr_id'] ) ? absint( wp_unslash( $_POST['dolibarr_id'] ) ) : 0;
 		$operation = isset( $_POST['operation'] ) ? sanitize_key( wp_unslash( $_POST['operation'] ) ) : '';
-		if ( ! $user_id ) {
+		if ( ! $user_id && ! $dolibarr_id ) {
 			wp_send_json_error( array( 'message' => __( 'Cliente no válido.', 'dolisync' ) ), 400 );
 		}
 		try {
@@ -102,11 +115,16 @@ class Dolisync_Customers_Page {
 				}
 				wp_send_json_success( array( 'message' => 'ignore' === $operation ? __( 'Cliente omitido.', 'dolisync' ) : __( 'Cliente restaurado.', 'dolisync' ) ) );
 			}
-			if ( 'sync' !== $operation ) {
+			if ( ! in_array( $operation, array( 'sync', 'dolibarr_to_woo' ), true ) ) {
 				throw new InvalidArgumentException( __( 'Acción no válida.', 'dolisync' ) );
 			}
-			require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/contacts/class-dolisync-contact-sync-reverse.php';
-			$result = ( new Dolisync_Contact_Sync_Reverse() )->sync_customer( $user_id );
+			if ( 'dolibarr_to_woo' === $operation ) {
+				require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/contacts/class-dolisync-contact-sync.php';
+				$result = ( new Dolisync_Contact_Sync() )->sync_contact( $dolibarr_id );
+			} else {
+				require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/contacts/class-dolisync-contact-sync-reverse.php';
+				$result = ( new Dolisync_Contact_Sync_Reverse() )->sync_customer( $user_id );
+			}
 			if ( empty( $result['success'] ) ) {
 				wp_send_json_error( array( 'message' => $result['message'] ?? __( 'No se pudo sincronizar.', 'dolisync' ) ) );
 			}
@@ -114,6 +132,67 @@ class Dolisync_Customers_Page {
 		} catch ( Throwable $e ) {
 			wp_send_json_error( array( 'message' => $e->getMessage() ), 500 );
 		}
+	}
+
+	public static function ajax_simulation() {
+		self::guard();
+		$direction = isset( $_POST['direction'] ) ? sanitize_key( wp_unslash( $_POST['direction'] ) ) : '';
+		if ( ! in_array( $direction, array( 'dolibarr_to_woocommerce', 'woocommerce_to_dolibarr' ), true ) ) {
+			wp_send_json_error( array( 'message' => __( 'Dirección no válida.', 'dolisync' ) ), 400 );
+		}
+		try {
+			$items = 'dolibarr_to_woocommerce' === $direction ? self::simulate_dolibarr_to_woo() : self::simulate_woo_to_dolibarr();
+			wp_send_json_success( array( 'items' => $items, 'summary' => array( 'total' => count( $items ), 'create' => count( array_filter( $items, static function ( $item ) { return 'create' === $item['action']; } ) ), 'update' => count( array_filter( $items, static function ( $item ) { return 'update' === $item['action']; } ) ) ) ) );
+		} catch ( Throwable $e ) { wp_send_json_error( array( 'message' => $e->getMessage() ), 500 ); }
+	}
+
+	private static function simulate_woo_to_dolibarr() {
+		global $wpdb;
+		$relations = $wpdb->get_results( "SELECT wp_user_id, dolibarr_contact_id, dni, email, first_name, last_name FROM {$wpdb->prefix}dolisync_contact_relations", OBJECT_K ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		$items = array();
+		foreach ( self::build_catalog() as $row ) {
+			if ( in_array( $row['status'], array( 'ignored', 'incomplete' ), true ) ) { continue; }
+			$relation = $relations[ $row['id'] ] ?? null;
+			$differences = array();
+			if ( ! $relation ) { $differences[] = __( 'nuevo tercero', 'dolisync' ); }
+			if ( $relation && 0 !== strcasecmp( trim( (string) $relation->email ), trim( (string) $row['email'] ) ) ) { $differences[] = __( 'email', 'dolisync' ); }
+			if ( $relation && strtoupper( trim( (string) $relation->dni ) ) !== strtoupper( trim( (string) $row['dni'] ) ) ) { $differences[] = __( 'documento fiscal', 'dolisync' ); }
+			if ( $relation && trim( (string) $relation->first_name . ' ' . (string) ( $relation->last_name ?? '' ) ) !== trim( (string) $row['name'] ) ) { $differences[] = __( 'nombre', 'dolisync' ); }
+			if ( empty( $differences ) ) { continue; }
+			$items[] = array( 'key' => 'w' . $row['id'], 'action' => $relation ? 'update' : 'create', 'label' => $row['name'], 'reference' => $row['email'], 'differences' => $differences, 'user_id' => (int) $row['id'], 'dolibarr_id' => (int) $row['dolibarr_id'] );
+		}
+		return $items;
+	}
+
+	private static function simulate_dolibarr_to_woo() {
+		global $wpdb;
+		require_once DOLISYNC_PLUGIN_DIR . 'includes/api/class-dolisync-api-client.php';
+		$response = ( new Dolisync_API_Client() )->get( '/thirdparties', array( 'sortfield' => 't.rowid', 'sortorder' => 'ASC', 'limit' => 1000 ) );
+		if ( empty( $response['success'] ) ) { throw new RuntimeException( (string) ( $response['message'] ?? __( 'No se pudieron leer los terceros de Dolibarr.', 'dolisync' ) ) ); }
+		$data = $response['data'] ?? array();
+		if ( is_object( $data ) ) { $data = json_decode( wp_json_encode( $data ), true ); }
+		if ( is_array( $data ) && ! isset( $data[0] ) ) { $data = array( $data ); }
+		$relations = $wpdb->get_results( "SELECT * FROM {$wpdb->prefix}dolisync_contact_relations", OBJECT_K ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		$by_dolibarr = array(); foreach ( (array) $relations as $relation ) { $by_dolibarr[ (int) $relation->dolibarr_contact_id ] = $relation; }
+		$items = array();
+		foreach ( (array) $data as $contact ) {
+			if ( ! is_array( $contact ) ) { continue; }
+			$id = (int) ( $contact['id'] ?? $contact['rowid'] ?? 0 ); if ( ! $id ) { continue; }
+			$relation = $by_dolibarr[ $id ] ?? null; $user = $relation ? get_user_by( 'id', (int) $relation->wp_user_id ) : false;
+			$name = trim( (string) ( $contact['firstname'] ?? '' ) . ' ' . (string) ( $contact['name'] ?? '' ) );
+			$differences = array();
+			if ( ! $relation || ! $user ) { $differences[] = __( 'nuevo cliente', 'dolisync' ); }
+			if ( $user && 0 !== strcasecmp( trim( (string) $user->user_email ), trim( (string) ( $contact['email'] ?? '' ) ) ) ) { $differences[] = __( 'email', 'dolisync' ); }
+			if ( $user && strtoupper( trim( (string) get_user_meta( $user->ID, 'dolisync_document_id', true ) ) ) !== strtoupper( trim( (string) ( $contact['idprof1'] ?? '' ) ) ) ) { $differences[] = __( 'documento fiscal', 'dolisync' ); }
+			$local_name = $user ? trim( (string) get_user_meta( $user->ID, 'first_name', true ) . ' ' . (string) get_user_meta( $user->ID, 'last_name', true ) ) : '';
+			if ( $user && 0 !== strcasecmp( $local_name, $name ) ) { $differences[] = __( 'nombre', 'dolisync' ); }
+			$remote_country = strtoupper( trim( (string) ( $contact['country_code'] ?? $contact['country'] ?? $contact['country_id'] ?? '' ) ) );
+			$local_country = $user ? strtoupper( trim( (string) get_user_meta( $user->ID, 'billing_country', true ) ) ) : '';
+			if ( $user && '' !== $remote_country && $local_country !== $remote_country ) { $differences[] = __( 'país', 'dolisync' ); }
+			if ( empty( $differences ) ) { continue; }
+			$items[] = array( 'key' => 'd' . $id, 'action' => $user ? 'update' : 'create', 'label' => $name ?: __( 'Cliente sin nombre', 'dolisync' ), 'reference' => (string) ( $contact['email'] ?? '' ), 'differences' => $differences, 'user_id' => $user ? (int) $user->ID : 0, 'dolibarr_id' => $id );
+		}
+		return $items;
 	}
 
 	public static function ajax_conflicts() {

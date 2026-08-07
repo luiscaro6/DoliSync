@@ -977,7 +977,7 @@ class Dolisync_Product_Sync_Reverse {
 		}
 
 		if ( ! empty( $kept_variation_ids ) ) {
-			$existing_variations = $wpdb->get_col( $wpdb->prepare( "SELECT wc_variation_id FROM {$table} WHERE wc_product_id = %d", $wc_product_id ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+			$existing_variations = (array) $wpdb->get_col( $wpdb->prepare( "SELECT wc_variation_id FROM {$table} WHERE wc_product_id = %d", $wc_product_id ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 			foreach ( (array) $existing_variations as $existing_variation_id ) {
 				if ( ! in_array( (int) $existing_variation_id, $kept_variation_ids, true ) ) {
 					$wpdb->delete( $table, array( 'wc_variation_id' => (int) $existing_variation_id ), array( '%d' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery

@@ -35,7 +35,7 @@ class Dolisync_Contact_Sync {
 	 */
 	private function filter_relation_fields( $table, $data ) {
 		global $wpdb;
-		$columns = $wpdb->get_col( "DESCRIBE {$table}", 0 ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		$columns = (array) $wpdb->get_col( "DESCRIBE {$table}", 0 ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 		$filtered = array();
 		$formats = array();
 		foreach ( $data as $k => $v ) {
@@ -213,6 +213,22 @@ class Dolisync_Contact_Sync {
 		$lastname = trim( (string) ( $contact['name'] ?? '' ) );
 		$combined = trim( $firstname . ' ' . $lastname );
 		return $combined ?: 'Contact';
+	}
+
+	/** Sincroniza un único tercero de Dolibarr hacia WooCommerce. */
+	public function sync_contact( $dolibarr_id ) {
+		$dolibarr_id = absint( $dolibarr_id );
+		if ( ! $dolibarr_id ) { return array( 'success' => false, 'message' => __( 'Tercero de Dolibarr no válido.', 'dolisync' ) ); }
+		$response = $this->api_client->get( '/thirdparties/' . $dolibarr_id );
+		if ( empty( $response['success'] ) ) { return array( 'success' => false, 'message' => (string) ( $response['message'] ?? __( 'No se pudo leer el tercero.', 'dolisync' ) ) ); }
+		$data = $response['data'] ?? array();
+		if ( is_object( $data ) ) { $data = json_decode( wp_json_encode( $data ), true ); }
+		if ( isset( $data[0] ) && is_array( $data[0] ) ) { $data = $data[0]; }
+		if ( ! is_array( $data ) ) { return array( 'success' => false, 'message' => __( 'Dolibarr devolvió un tercero no válido.', 'dolisync' ) ); }
+		$this->stats = array( 'created' => 0, 'updated' => 0, 'skipped' => 0, 'errors' => 0, 'details' => array(), 'errors_list' => array() );
+		$this->process_contact( $data );
+		if ( $this->stats['errors'] > 0 ) { return array( 'success' => false, 'message' => (string) ( $this->stats['errors_list'][0]['error'] ?? __( 'No se pudo sincronizar el cliente.', 'dolisync' ) ), 'stats' => $this->stats ); }
+		return array( 'success' => true, 'message' => __( 'Cliente sincronizado desde Dolibarr.', 'dolisync' ), 'stats' => $this->stats );
 	}
 
 	private function split_name( $contact ) {

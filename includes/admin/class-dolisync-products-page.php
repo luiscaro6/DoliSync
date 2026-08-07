@@ -20,6 +20,7 @@ class Dolisync_Products_Page {
 		add_action( 'wp_ajax_dolisync_product_action', array( __CLASS__, 'ajax_product_action' ) );
 		add_action( 'wp_ajax_dolisync_product_conflicts', array( __CLASS__, 'ajax_conflicts' ) );
 		add_action( 'wp_ajax_dolisync_resolve_product_conflict', array( __CLASS__, 'ajax_resolve_conflict' ) );
+		add_action( 'wp_ajax_dolisync_product_simulation', array( __CLASS__, 'ajax_simulation' ) );
 	}
 
 	public static function render() {
@@ -40,6 +41,8 @@ class Dolisync_Products_Page {
 			<nav class="nav-tab-wrapper dolisync-customers-tabs" aria-label="<?php echo esc_attr__( 'Secciones de productos', 'dolisync' ); ?>">
 				<button type="button" class="nav-tab nav-tab-active" data-products-tab="catalog"><?php echo esc_html__( 'Catálogo', 'dolisync' ); ?></button>
 				<button type="button" class="nav-tab" data-products-tab="conflicts"><?php echo esc_html__( 'Conflictos', 'dolisync' ); ?> <span id="dolisync-product-conflicts-count" class="dolisync-tab-count">0</span></button>
+				<button type="button" class="nav-tab" data-products-tab="simulation-dolibarr" data-simulation-resource="products" data-simulation-direction="dolibarr_to_woocommerce"><?php echo esc_html__( 'Simulación Doli → Woo', 'dolisync' ); ?></button>
+				<button type="button" class="nav-tab" data-products-tab="simulation-woo" data-simulation-resource="products" data-simulation-direction="woocommerce_to_dolibarr"><?php echo esc_html__( 'Simulación Woo → Doli', 'dolisync' ); ?></button>
 			</nav>
 			<div id="dolisync-products-catalog-panel" class="dolisync-products-panel">
 			<section class="dolisync-page-actions" aria-labelledby="dolisync-products-sync-title">
@@ -49,11 +52,8 @@ class Dolisync_Products_Page {
 				</div>
 				<div class="dolisync-page-actions-buttons">
 					<button type="button" class="button button-primary" id="dolisync-sync-stock" data-nonce="<?php echo esc_attr( $nonce ); ?>"><?php echo esc_html__( 'Sincronizar stock', 'dolisync' ); ?></button>
-					<button type="button" class="button dolisync-preview-sync" data-resource="stock" data-direction="dolibarr_to_woocommerce"><?php echo esc_html__( 'Simular stock', 'dolisync' ); ?></button>
 					<button type="button" class="button button-primary" id="dolisync-sync-products-dolibarr-to-woo" data-nonce="<?php echo esc_attr( $nonce ); ?>"><?php echo esc_html__( 'Dolibarr → WooCommerce', 'dolisync' ); ?></button>
-					<button type="button" class="button dolisync-preview-sync" data-resource="products" data-direction="dolibarr_to_woocommerce"><?php echo esc_html__( 'Simular Doli → Woo', 'dolisync' ); ?></button>
 					<button type="button" class="button" id="dolisync-sync-products-woo-to-dolibarr" data-nonce="<?php echo esc_attr( $nonce ); ?>"><?php echo esc_html__( 'WooCommerce → Dolibarr', 'dolisync' ); ?></button>
-					<button type="button" class="button dolisync-preview-sync" data-resource="products" data-direction="woocommerce_to_dolibarr"><?php echo esc_html__( 'Simular Woo → Doli', 'dolisync' ); ?></button>
 					<button type="button" class="button" id="dolisync-sync-product-categories" data-nonce="<?php echo esc_attr( $nonce ); ?>"><?php echo esc_html__( 'Sincronizar categorías', 'dolisync' ); ?></button>
 				</div>
 			</section>
@@ -85,8 +85,47 @@ class Dolisync_Products_Page {
 				<div id="dolisync-product-conflicts-notice" aria-live="polite"></div>
 				<div id="dolisync-product-conflicts-table" class="dolisync-products-table-wrap"><div class="dolisync-products-loading"><span class="spinner is-active"></span><?php echo esc_html__( 'Leyendo conflictos…', 'dolisync' ); ?></div></div>
 			</div>
+			<?php self::render_simulation_panel( 'simulation-dolibarr', __( 'Dolibarr → WooCommerce', 'dolisync' ), __( 'Revisa las altas y modificaciones que Dolibarr produciría en WooCommerce.', 'dolisync' ) ); ?>
+			<?php self::render_simulation_panel( 'simulation-woo', __( 'WooCommerce → Dolibarr', 'dolisync' ), __( 'Revisa las altas y modificaciones que WooCommerce produciría en Dolibarr.', 'dolisync' ) ); ?>
 		</div>
 		<?php
+	}
+
+	private static function render_simulation_panel( $id, $title, $description ) {
+		?>
+		<div id="dolisync-products-<?php echo esc_attr( $id ); ?>-panel" class="dolisync-products-panel dolisync-simulation-panel" hidden>
+			<div class="dolisync-conflicts-heading"><div><h2><?php echo esc_html( $title ); ?></h2><p><?php echo esc_html( $description ); ?></p></div><div class="dolisync-page-actions-buttons"><button type="button" class="button button-primary dolisync-run-simulation"><?php echo esc_html__( 'Simular', 'dolisync' ); ?></button><button type="button" class="button dolisync-apply-all-simulation" disabled><?php echo esc_html__( 'Enviar todos', 'dolisync' ); ?></button></div></div>
+			<div class="dolisync-simulation-notice" aria-live="polite"></div><div class="dolisync-simulation-summary dolisync-products-summary"></div>
+			<div class="dolisync-simulation-table dolisync-products-table-wrap"><div class="dolisync-products-zero"><span class="dashicons dashicons-search"></span><h2><?php echo esc_html__( 'Simulación pendiente', 'dolisync' ); ?></h2><p><?php echo esc_html__( 'Pulsa Simular para calcular los posibles cambios. No se modificará ningún dato.', 'dolisync' ); ?></p></div></div>
+		</div>
+		<?php
+	}
+
+	public static function ajax_simulation() {
+		self::guard_ajax();
+		$direction = isset( $_POST['direction'] ) ? sanitize_key( wp_unslash( $_POST['direction'] ) ) : '';
+		if ( ! in_array( $direction, array( 'dolibarr_to_woocommerce', 'woocommerce_to_dolibarr' ), true ) ) {
+			wp_send_json_error( array( 'message' => __( 'Dirección no válida.', 'dolisync' ) ), 400 );
+		}
+		try {
+			$items = array();
+			foreach ( self::build_catalog() as $row ) {
+				$source = 'dolibarr_to_woocommerce' === $direction ? $row['dolibarr'] : $row['woo'];
+				$target = 'dolibarr_to_woocommerce' === $direction ? $row['woo'] : $row['dolibarr'];
+				if ( empty( $source ) || ! empty( $row['ignored'] ) || 'match' === $row['comparison'] ) { continue; }
+				$items[] = array(
+					'key' => $row['key'], 'action' => empty( $target ) ? 'create' : 'update',
+					'label' => (string) ( $source['name'] ?? __( 'Producto sin nombre', 'dolisync' ) ),
+					'reference' => (string) ( $source['sku'] ?? '' ), 'differences' => $row['differences'],
+					'wc_id' => (int) ( $row['woo']['id'] ?? 0 ), 'dolibarr_id' => (int) ( $row['dolibarr']['id'] ?? 0 ),
+				);
+			}
+			wp_send_json_success( array( 'items' => $items, 'summary' => self::simulation_summary( $items ) ) );
+		} catch ( Throwable $e ) { wp_send_json_error( array( 'message' => $e->getMessage() ), 500 ); }
+	}
+
+	private static function simulation_summary( $items ) {
+		return array( 'total' => count( $items ), 'create' => count( array_filter( $items, static function ( $item ) { return 'create' === $item['action']; } ) ), 'update' => count( array_filter( $items, static function ( $item ) { return 'update' === $item['action']; } ) ) );
 	}
 
 	public static function ajax_catalog() {
@@ -412,6 +451,12 @@ class Dolisync_Products_Page {
 		$tolerance = pow( 10, -1 * max( 0, $precision ) ) / 2;
 		if ( '' !== (string) $woo['price'] && '' !== (string) $dolibarr['price'] && abs( (float) $woo['price'] - (float) $dolibarr['price'] ) >= $tolerance ) {
 			$differences[] = __( 'precio', 'dolisync' );
+		}
+		if ( null !== $woo['stock'] && null !== $dolibarr['stock'] && abs( (float) $woo['stock'] - (float) $dolibarr['stock'] ) >= 0.000001 ) {
+			$differences[] = __( 'stock', 'dolisync' );
+		}
+		if ( (string) ( $woo['type'] ?? '' ) !== (string) ( $dolibarr['type'] ?? '' ) ) {
+			$differences[] = __( 'tipo', 'dolisync' );
 		}
 		if ( self::variation_signatures( $woo['variations'] ) !== self::variation_signatures( $dolibarr['variations'] ) ) {
 			$differences[] = __( 'variaciones', 'dolisync' );

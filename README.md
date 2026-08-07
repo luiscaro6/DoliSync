@@ -195,10 +195,10 @@ documentos fiscales ni información sensible.
 
 ### Simulación previa
 
-Las sincronizaciones manuales de productos, clientes y stock muestran primero
-una simulación de solo lectura. El resumen estima altas, actualizaciones,
-omisiones, conflictos y advertencias antes de solicitar la confirmación. Los
-botones **Simular** permiten repetir esta comprobación sin ejecutar cambios.
+Las pantallas de productos y clientes incluyen dos pestañas de simulación, una
+por cada sentido. Cada simulación calcula altas y modificaciones de solo lectura,
+muestra los campos afectados y permite enviar una fila concreta o todos los
+cambios pendientes de forma secuencial.
 
 ### Diagnóstico operativo
 
