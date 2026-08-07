@@ -47,7 +47,9 @@ class Dolisync_Customers_Page {
 				</div>
 				<div class="dolisync-page-actions-buttons">
 					<button type="button" class="button button-primary" id="dolisync-sync-dolibarr-to-woo" data-nonce="<?php echo esc_attr( $nonce ); ?>"><?php echo esc_html__( 'Dolibarr → WooCommerce', 'dolisync' ); ?></button>
+					<button type="button" class="button dolisync-preview-sync" data-resource="contacts" data-direction="dolibarr_to_woocommerce"><?php echo esc_html__( 'Simular Doli → Woo', 'dolisync' ); ?></button>
 					<button type="button" class="button" id="dolisync-sync-woo-to-dolibarr" data-nonce="<?php echo esc_attr( $nonce ); ?>"><?php echo esc_html__( 'WooCommerce → Dolibarr', 'dolisync' ); ?></button>
+					<button type="button" class="button dolisync-preview-sync" data-resource="contacts" data-direction="woocommerce_to_dolibarr"><?php echo esc_html__( 'Simular Woo → Doli', 'dolisync' ); ?></button>
 				</div>
 			</section>
 			<div id="dolisync-sync-result" class="dolisync-page-action-result" aria-live="polite"></div>

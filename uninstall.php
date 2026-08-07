@@ -10,7 +10,7 @@ if ( ! defined( 'WP_UNINSTALL_PLUGIN' ) ) {
 global $wpdb;
 
 // Las tareas y cachés de ejecución nunca deben sobrevivir al plugin.
-foreach ( array( 'dolisync_logs_cache', 'dolisync_config_cache', 'dolisync_admin_notices', 'dolisync_stock_sync_lock' ) as $transient ) {
+foreach ( array( 'dolisync_logs_cache', 'dolisync_config_cache', 'dolisync_admin_notices', 'dolisync_stock_sync_lock', 'dolisync_schema_migration_lock' ) as $transient ) {
 	delete_transient( $transient );
 }
 
@@ -101,6 +101,8 @@ $options = array(
 	'dolisync_activated',
 	'dolisync_deactivated',
 	'dolisync_migrations_result',
+	'dolisync_db_version',
+	'dolisync_migration_error',
 	'dolisync_lock_products_dolibarr_to_woo',
 	'dolisync_lock_products_woo_to_dolibarr',
 	'dolisync_lock_products_catalog',

@@ -49,8 +49,11 @@ class Dolisync_Products_Page {
 				</div>
 				<div class="dolisync-page-actions-buttons">
 					<button type="button" class="button button-primary" id="dolisync-sync-stock" data-nonce="<?php echo esc_attr( $nonce ); ?>"><?php echo esc_html__( 'Sincronizar stock', 'dolisync' ); ?></button>
+					<button type="button" class="button dolisync-preview-sync" data-resource="stock" data-direction="dolibarr_to_woocommerce"><?php echo esc_html__( 'Simular stock', 'dolisync' ); ?></button>
 					<button type="button" class="button button-primary" id="dolisync-sync-products-dolibarr-to-woo" data-nonce="<?php echo esc_attr( $nonce ); ?>"><?php echo esc_html__( 'Dolibarr → WooCommerce', 'dolisync' ); ?></button>
+					<button type="button" class="button dolisync-preview-sync" data-resource="products" data-direction="dolibarr_to_woocommerce"><?php echo esc_html__( 'Simular Doli → Woo', 'dolisync' ); ?></button>
 					<button type="button" class="button" id="dolisync-sync-products-woo-to-dolibarr" data-nonce="<?php echo esc_attr( $nonce ); ?>"><?php echo esc_html__( 'WooCommerce → Dolibarr', 'dolisync' ); ?></button>
+					<button type="button" class="button dolisync-preview-sync" data-resource="products" data-direction="woocommerce_to_dolibarr"><?php echo esc_html__( 'Simular Woo → Doli', 'dolisync' ); ?></button>
 					<button type="button" class="button" id="dolisync-sync-product-categories" data-nonce="<?php echo esc_attr( $nonce ); ?>"><?php echo esc_html__( 'Sincronizar categorías', 'dolisync' ); ?></button>
 				</div>
 			</section>

@@ -15,11 +15,13 @@ class Dolisync_Activator {
 		}
 
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/database/class-dolisync-schema.php';
+		require_once DOLISYNC_PLUGIN_DIR . 'includes/database/class-dolisync-migrations.php';
 		try {
 			$status = Dolisync_Schema::repair_schema();
 			if ( empty( $status['healthy'] ) ) {
 				throw new RuntimeException( sprintf( __( 'El esquema sigue incompleto después de la migración (%d problemas).', 'dolisync' ), (int) ( $status['issues'] ?? 0 ) ) );
 			}
+			update_option( 'dolisync_db_version', Dolisync_Migrations::DB_VERSION, false );
 		} catch ( Throwable $error ) {
 			deactivate_plugins( DOLISYNC_PLUGIN_BASENAME );
 			wp_die(

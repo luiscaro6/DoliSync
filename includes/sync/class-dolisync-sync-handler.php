@@ -16,12 +16,36 @@ class Dolisync_Sync_Handler {
 		add_action( 'wp_ajax_dolisync_sync_product_categories', array( __CLASS__, 'handle_product_categories_sync_request' ) );
 		add_action( 'wp_ajax_dolisync_sync_products_reverse', array( __CLASS__, 'handle_product_sync_reverse_request' ) );
 		add_action( 'wp_ajax_dolisync_sync_stock', array( __CLASS__, 'handle_stock_sync_request' ) );
+		add_action( 'wp_ajax_dolisync_dry_run', array( __CLASS__, 'handle_dry_run_request' ) );
+	}
+
+	/** Devuelve una estimación de cambios sin escribir en ninguno de los sistemas. */
+	public static function handle_dry_run_request() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_send_json_error( array( 'message' => __( 'Permisos insuficientes', 'dolisync' ) ), 403 );
+		}
+		check_ajax_referer( DOLISYNC_NONCE_ACTION, 'nonce' );
+		try {
+			require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/class-dolisync-dry-run.php';
+			$resource = isset( $_POST['resource'] ) ? sanitize_key( wp_unslash( $_POST['resource'] ) ) : '';
+			$direction = isset( $_POST['direction'] ) ? sanitize_key( wp_unslash( $_POST['direction'] ) ) : '';
+			wp_send_json_success( Dolisync_Dry_Run::preview( $resource, $direction ) );
+		} catch ( Throwable $error ) {
+			wp_send_json_error( array( 'message' => $error->getMessage() ), 400 );
+		}
+	}
+
+	private static function start_operation_context( $prefix ) {
+		require_once DOLISYNC_PLUGIN_DIR . 'includes/core/class-dolisync-operation-context.php';
+		$provided = isset( $_POST['run_id'] ) ? sanitize_text_field( wp_unslash( $_POST['run_id'] ) ) : '';
+		return Dolisync_Operation_Context::start( $prefix, $provided );
 	}
 
 	/**
 	 * Manejar solicitud de sincronización Dolibarr → WooCommerce AJAX.
 	 */
 	public static function handle_sync_request() {
+		self::start_operation_context( 'contacts-import' );
 		// Verificar permisos
 		if ( ! current_user_can( 'manage_options' ) ) {
 			wp_send_json_error(
@@ -65,6 +89,7 @@ class Dolisync_Sync_Handler {
 	 * Manejar solicitud de sincronización inversa WooCommerce → Dolibarr AJAX.
 	 */
 	public static function handle_sync_reverse_request() {
+		self::start_operation_context( 'contacts-export' );
 		// Verificar permisos
 		if ( ! current_user_can( 'manage_options' ) ) {
 			wp_send_json_error(
@@ -118,6 +143,7 @@ class Dolisync_Sync_Handler {
 	 * Manejar solicitud de sincronización de productos Dolibarr → WooCommerce AJAX.
 	 */
 	public static function handle_product_sync_request() {
+		self::start_operation_context( 'products-import' );
 		if ( ! current_user_can( 'manage_options' ) ) {
 			wp_send_json_error( array( 'message' => __( 'Permisos insuficientes', 'dolisync' ) ), 403 );
 		}
@@ -160,6 +186,7 @@ class Dolisync_Sync_Handler {
 	 * Manejar solicitud de sincronización de categorías de producto Dolibarr → WooCommerce AJAX.
 	 */
 	public static function handle_product_categories_sync_request() {
+		self::start_operation_context( 'categories' );
 		if ( ! current_user_can( 'manage_options' ) ) {
 			wp_send_json_error( array( 'message' => __( 'Permisos insuficientes', 'dolisync' ) ), 403 );
 		}
@@ -188,6 +215,7 @@ class Dolisync_Sync_Handler {
 	 * Manejar solicitud de sincronización manual WooCommerce → Dolibarr.
 	 */
 	public static function handle_product_sync_reverse_request() {
+		self::start_operation_context( 'products-export' );
 		if ( ! current_user_can( 'manage_options' ) ) {
 			wp_send_json_error( array( 'message' => __( 'Permisos insuficientes', 'dolisync' ) ), 403 );
 		}
@@ -258,6 +286,7 @@ class Dolisync_Sync_Handler {
 		} else {
 			update_option( $lock_key, $run_id . '|' . time(), false );
 		}
+		self::start_operation_context( 'stock' );
 
 		try {
 			require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/products/class-dolisync-stock-sync.php';

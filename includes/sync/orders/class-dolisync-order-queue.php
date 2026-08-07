@@ -122,6 +122,8 @@ class Dolisync_Order_Queue {
 	public static function process( $order_id, $manual = false ) {
 		global $wpdb;
 		$order_id = absint( $order_id );
+		require_once DOLISYNC_PLUGIN_DIR . 'includes/core/class-dolisync-operation-context.php';
+		Dolisync_Operation_Context::start( 'order-' . $order_id );
 		$table = $wpdb->prefix . 'dolisync_order_relations';
 		$stale = wp_date( 'Y-m-d H:i:s', time() - 15 * MINUTE_IN_SECONDS, wp_timezone() );
 		$claimed = $wpdb->query( $wpdb->prepare( "UPDATE {$table} SET sync_status = 'processing', queue_locked_at = %s, queue_next_attempt_at = NULL, queue_attempts = queue_attempts + 1, updated_at = %s WHERE wc_order_id = %d AND sync_status IN ('queued','error') AND (queue_locked_at IS NULL OR queue_locked_at < %s)", current_time( 'mysql' ), current_time( 'mysql' ), $order_id, $stale ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery

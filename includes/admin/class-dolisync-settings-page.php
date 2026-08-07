@@ -72,6 +72,8 @@ class Dolisync_Settings_Page {
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/core/class-dolisync-config.php';
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/core/class-dolisync-encryption.php';
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/database/class-dolisync-schema.php';
+		require_once DOLISYNC_PLUGIN_DIR . 'includes/database/class-dolisync-migrations.php';
+		require_once DOLISYNC_PLUGIN_DIR . 'includes/core/class-dolisync-diagnostics.php';
 		global $wpdb;
 
 		$config = Dolisync_Config::get_all();
@@ -81,6 +83,8 @@ class Dolisync_Settings_Page {
 		$stock_interval = (string) ( $config['stock_sync_interval'] ?? 'off' );
 		$next_stock = wp_next_scheduled( 'dolisync_stock_autosync' );
 		$schema_status = Dolisync_Schema::get_schema_status();
+		$migration_status = Dolisync_Migrations::get_status();
+		$operations = Dolisync_Diagnostics::get_summary();
 		$schema_result = isset( $_GET['dolisync-schema'] ) ? sanitize_key( wp_unslash( $_GET['dolisync-schema'] ) ) : '';
 		$show_schema_details = in_array( $schema_result, array( 'checked', 'repaired', 'failed' ), true );
 		$order_table = $wpdb->prefix . 'dolisync_order_relations';
@@ -109,6 +113,8 @@ class Dolisync_Settings_Page {
 			array( 'status' => 'https' === $scheme ? 'good' : ( '' === $url ? 'critical' : 'warning' ), 'icon' => 'lock', 'title' => __( 'Transporte seguro', 'dolisync' ), 'value' => 'https' === $scheme ? __( 'HTTPS activado', 'dolisync' ) : __( 'La URL no utiliza HTTPS', 'dolisync' ), 'help' => __( 'Las credenciales no deben viajar mediante HTTP en producción.', 'dolisync' ) ),
 			array( 'status' => Dolisync_Encryption::is_available() ? 'good' : 'critical', 'icon' => 'shield-alt', 'title' => __( 'Cifrado de credenciales', 'dolisync' ), 'value' => Dolisync_Encryption::is_available() ? __( 'AES-256-GCM disponible', 'dolisync' ) : __( 'OpenSSL o AES-256-GCM no disponible', 'dolisync' ), 'help' => __( 'Protege las claves almacenadas por el plugin.', 'dolisync' ) ),
 			array( 'schema' => true, 'status' => ! empty( $schema_status['healthy'] ) ? 'good' : 'critical', 'icon' => 'database', 'title' => __( 'Base de datos', 'dolisync' ), 'value' => ! empty( $schema_status['healthy'] ) ? __( 'Esquema preparado', 'dolisync' ) : sprintf( __( 'Se han detectado %d problemas', 'dolisync' ), (int) $schema_status['issues'] ), 'help' => ! empty( $schema_status['healthy'] ) ? __( 'Todas las tablas y columnas de DoliSync están disponibles.', 'dolisync' ) : __( 'Hay tablas o columnas ausentes. Comprueba el detalle y actualiza el esquema.', 'dolisync' ) ),
+			array( 'status' => empty( $migration_status['pending'] ) && empty( $migration_status['error'] ) ? 'good' : 'critical', 'icon' => 'update', 'title' => __( 'Migraciones', 'dolisync' ), 'value' => sprintf( __( 'Instalada %1$s · objetivo %2$s', 'dolisync' ), $migration_status['installed'], $migration_status['target'] ), 'help' => empty( $migration_status['error']['message'] ) ? __( 'Las migraciones se ejecutan una sola vez al cambiar la versión del esquema.', 'dolisync' ) : (string) $migration_status['error']['message'] ),
+			array( 'status' => ! empty( $operations['alert'] ) ? 'critical' : 'good', 'icon' => 'chart-line', 'title' => __( 'Operación (24 h)', 'dolisync' ), 'value' => sprintf( __( '%1$d errores · %2$d trabajos fallidos', 'dolisync' ), $operations['errors_24h'], $operations['failed_jobs'] ), 'help' => sprintf( __( 'Latencia API media: %1$d ms. Trabajos bloqueados: %2$d.', 'dolisync' ), $operations['avg_time_ms'], $operations['stalled_jobs'] ) ),
 			array( 'status' => 'off' === $stock_interval ? 'neutral' : ( $next_stock ? 'good' : 'critical' ), 'icon' => 'clock', 'title' => __( 'Cron de stock', 'dolisync' ), 'value' => 'off' === $stock_interval ? __( 'Desactivado', 'dolisync' ) : ( $next_stock ? sprintf( __( 'Próxima ejecución: %s', 'dolisync' ), wp_date( 'd/m/Y H:i:s', $next_stock, wp_timezone() ) ) : __( 'Configurado pero no programado', 'dolisync' ) ), 'help' => __( 'WP-Cron debe ejecutarse regularmente en producción.', 'dolisync' ) ),
 			array( 'status' => $tax_rates <= count( $tax_mapping ) ? 'good' : 'warning', 'icon' => 'money-alt', 'title' => __( 'Mapeo fiscal', 'dolisync' ), 'value' => sprintf( __( '%1$d de %2$d tasas mapeadas', 'dolisync' ), min( count( $tax_mapping ), $tax_rates ), $tax_rates ), 'help' => __( 'Revisa el mapeo al cambiar los impuestos de WooCommerce.', 'dolisync' ) ),
 			array( 'status' => (int) ( $config['warehouse_id'] ?? 0 ) > 0 ? 'good' : 'warning', 'icon' => 'store', 'title' => __( 'Almacén Dolibarr', 'dolisync' ), 'value' => (int) ( $config['warehouse_id'] ?? 0 ) > 0 ? sprintf( '%s (#%d)', (string) ( $config['warehouse_name'] ?: __( 'Almacén', 'dolisync' ) ), (int) $config['warehouse_id'] ) : __( 'Sin almacén configurado', 'dolisync' ), 'help' => __( 'Necesario para las operaciones de existencias.', 'dolisync' ) ),
@@ -156,7 +162,7 @@ class Dolisync_Settings_Page {
 					<div class="dolisync-health-test-action"><span><?php echo esc_html( ! empty( $last_test['timestamp'] ) ? sprintf( __( 'Último: %s', 'dolisync' ), human_time_diff( strtotime( $last_test['timestamp'] ), current_time( 'timestamp' ) ) ) : __( 'Sin comprobar', 'dolisync' ) ); ?></span><button type="button" id="dolisync-test-connection" class="button button-primary" <?php disabled( ! Dolisync_Config::is_configured() ); ?>><span class="dashicons dashicons-controls-play"></span><span><?php echo esc_html__( 'Probar', 'dolisync' ); ?></span></button></div>
 				</article>
 			</div>
-			<div class="dolisync-health-foot"><span class="dashicons dashicons-info-outline"></span><p><strong><?php echo esc_html__( 'Comprobación local y segura.', 'dolisync' ); ?></strong> <?php echo esc_html__( 'Esta pantalla no llama a Dolibarr al abrirse. Usa el botón Probar de esta misma pantalla para verificar el servicio remoto.', 'dolisync' ); ?></p></div>
+			<div class="dolisync-health-foot"><span class="dashicons dashicons-info-outline"></span><p><strong><?php echo esc_html__( 'Comprobación local y segura.', 'dolisync' ); ?></strong> <?php echo esc_html__( 'Esta pantalla no llama a Dolibarr al abrirse. El informe omite URL, credenciales, clientes, pedidos y contenido de registros.', 'dolisync' ); ?></p><button type="button" class="button" id="dolisync-copy-diagnostic"><span class="dashicons dashicons-clipboard"></span> <?php echo esc_html__( 'Copiar informe anónimo', 'dolisync' ); ?></button><span id="dolisync-diagnostic-result" aria-live="polite"></span></div>
 		</div>
 		<?php
 	}

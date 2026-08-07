@@ -1153,3 +1153,63 @@ function dolisyncInitCustomersCatalog() {
 }
 
 jQuery(dolisyncInitCustomersCatalog);
+
+// Simulación global de sincronizaciones: este flujo solo realiza lecturas.
+jQuery(document).on('click', '.dolisync-preview-sync', function () {
+	const $button = jQuery(this).prop('disabled', true).addClass('is-busy');
+	const resource = String($button.data('resource') || '');
+	const direction = String($button.data('direction') || '');
+	jQuery.post(DoliSync.ajaxUrl, {action: 'dolisync_dry_run', nonce: DoliSync.nonce, resource: resource, direction: direction}).done(function (response) {
+		if (!response.success) { window.alert(response.data && response.data.message ? response.data.message : 'No se pudo completar la simulación.'); return; }
+		const s = response.data.summary || {};
+		const warnings = (response.data.warnings || []).map(function (item) { return '\n• ' + item; }).join('');
+		window.alert('Simulación de solo lectura\n\nCrear: ' + (s.create || 0) + '\nActualizar: ' + (s.update || 0) + '\nOmitir: ' + (s.skip || 0) + '\nConflictos: ' + (s.conflicts || 0) + '\nAdvertencias: ' + (s.warnings || 0) + warnings + '\n\nNo se ha modificado ningún dato.');
+	}).fail(function (xhr) {
+		window.alert(dolisyncAjaxError(xhr, 'No se pudo completar la simulación.'));
+	}).always(function () { $button.prop('disabled', false).removeClass('is-busy'); });
+});
+
+jQuery(document).on('click', '#dolisync-copy-diagnostic', function () {
+	const $button = jQuery(this).prop('disabled', true);
+	jQuery.post(DoliSync.ajaxUrl, {action: 'dolisync_diagnostic_report', nonce: DoliSync.nonce}).done(function (response) {
+		if (!response.success) { jQuery('#dolisync-diagnostic-result').text('No se pudo generar el informe.'); return; }
+		const report = JSON.stringify(response.data.report, null, 2);
+		if (navigator.clipboard && navigator.clipboard.writeText) {
+			navigator.clipboard.writeText(report).then(function () { jQuery('#dolisync-diagnostic-result').text('Informe copiado.'); });
+		} else {
+			window.prompt('Copia el informe anónimo:', report);
+		}
+	}).always(function () { $button.prop('disabled', false); });
+});
+
+// Antes de una sincronización masiva, obliga a revisar una simulación reciente.
+(function () {
+	const targets = {
+		'dolisync-sync-stock': ['stock', 'dolibarr_to_woocommerce'],
+		'dolisync-sync-products-dolibarr-to-woo': ['products', 'dolibarr_to_woocommerce'],
+		'dolisync-sync-products-woo-to-dolibarr': ['products', 'woocommerce_to_dolibarr'],
+		'dolisync-sync-dolibarr-to-woo': ['contacts', 'dolibarr_to_woocommerce'],
+		'dolisync-sync-woo-to-dolibarr': ['contacts', 'woocommerce_to_dolibarr']
+	};
+	document.addEventListener('click', function (event) {
+		const button = event.target.closest ? event.target.closest('button[id]') : null;
+		if (!button || !targets[button.id] || button.dataset.dolisyncPreviewApproved === '1') { return; }
+		event.preventDefault();
+		event.stopImmediatePropagation();
+		const target = targets[button.id];
+		button.disabled = true;
+		jQuery.post(DoliSync.ajaxUrl, {action: 'dolisync_dry_run', nonce: DoliSync.nonce, resource: target[0], direction: target[1]}).done(function (response) {
+			if (!response.success) { window.alert(response.data && response.data.message ? response.data.message : 'No se pudo simular la sincronización.'); return; }
+			const s = response.data.summary || {};
+			const message = 'Revisión previa (sin cambios)\n\nCrear: ' + (s.create || 0) + '\nActualizar: ' + (s.update || 0) + '\nOmitir: ' + (s.skip || 0) + '\nConflictos: ' + (s.conflicts || 0) + '\nAdvertencias: ' + (s.warnings || 0) + '\n\n¿Ejecutar ahora la sincronización?';
+			if (window.confirm(message)) {
+				button.dataset.dolisyncPreviewApproved = '1';
+				button.disabled = false;
+				button.click();
+				window.setTimeout(function () { delete button.dataset.dolisyncPreviewApproved; }, 1000);
+			}
+		}).fail(function (xhr) {
+			window.alert(dolisyncAjaxError(xhr, 'No se pudo simular la sincronización.'));
+		}).always(function () { button.disabled = false; });
+	}, true);
+}());

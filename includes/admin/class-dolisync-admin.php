@@ -22,7 +22,19 @@ class Dolisync_Admin {
 		add_action( 'admin_init', array( $this, 'maybe_redirect_to_onboarding' ), 5 );
         add_action( 'wp_ajax_dolisync_get_warehouses', array( $this, 'ajax_get_warehouses' ) );
         add_action( 'wp_ajax_dolisync_get_last_check_time', array( $this, 'ajax_get_last_check_time' ) );
+		add_action( 'wp_ajax_dolisync_diagnostic_report', array( $this, 'ajax_diagnostic_report' ) );
     }
+
+	public function ajax_diagnostic_report() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_send_json_error( array( 'message' => __( 'Permisos insuficientes.', 'dolisync' ) ), 403 );
+		}
+		check_ajax_referer( DOLISYNC_NONCE_ACTION, 'nonce' );
+		require_once DOLISYNC_PLUGIN_DIR . 'includes/core/class-dolisync-config.php';
+		require_once DOLISYNC_PLUGIN_DIR . 'includes/core/class-dolisync-encryption.php';
+		require_once DOLISYNC_PLUGIN_DIR . 'includes/core/class-dolisync-diagnostics.php';
+		wp_send_json_success( array( 'report' => Dolisync_Diagnostics::get_anonymized_report() ) );
+	}
 
 	public static function get_instance() {
 		if ( null === self::$instance ) {

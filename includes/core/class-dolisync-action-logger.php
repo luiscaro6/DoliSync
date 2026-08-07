@@ -8,6 +8,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 class Dolisync_Action_Logger {
+	private static $table_columns = null;
 	/**
 	 * Registra una acción interna.
 	 *
@@ -30,6 +31,14 @@ class Dolisync_Action_Logger {
 			'timestamp'   => current_time( 'mysql' ),
 			'usuario_id'  => null !== $usuario_id ? (int) $usuario_id : ( get_current_user_id() ?: null ),
 		);
+		if ( null === self::$table_columns ) {
+			self::$table_columns = (array) $wpdb->get_col( "DESCRIBE {$table}", 0 ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		}
+		$columns = self::$table_columns;
+		if ( in_array( 'correlation_id', $columns, true ) ) {
+			require_once DOLISYNC_PLUGIN_DIR . 'includes/core/class-dolisync-operation-context.php';
+			$insert_data['correlation_id'] = Dolisync_Operation_Context::ensure( 'action' );
+		}
 
 		$inserted = $wpdb->insert( $table, $insert_data ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 

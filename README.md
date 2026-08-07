@@ -193,7 +193,27 @@ operar la integración y conserva los registros solo durante el tiempo necesario
 Nunca compartas registros sin revisar antes que no contengan datos personales,
 documentos fiscales ni información sensible.
 
+### Simulación previa
+
+Las sincronizaciones manuales de productos, clientes y stock muestran primero
+una simulación de solo lectura. El resumen estima altas, actualizaciones,
+omisiones, conflictos y advertencias antes de solicitar la confirmación. Los
+botones **Simular** permiten repetir esta comprobación sin ejecutar cambios.
+
+### Diagnóstico operativo
+
+La pestaña **Salud** muestra errores de las últimas 24 horas, latencia media de
+la API, trabajos fallidos y trabajos potencialmente bloqueados. También permite
+copiar un informe técnico anonimizado que no incluye URL, credenciales, clientes,
+pedidos ni cuerpos de los registros. Las llamadas API y las acciones de una misma
+ejecución comparten un identificador de correlación.
+
 ## Persistencia
+
+El esquema tiene una versión independiente de la versión del plugin. DoliSync
+ejecuta las migraciones pendientes una sola vez, con bloqueo para evitar dos
+actualizaciones simultáneas, conserva los datos existentes y registra cualquier
+fallo para mostrarlo en **Salud**. La reparación manual permanece disponible.
 
 El plugin crea tablas propias usando el prefijo configurado en WordPress:
 

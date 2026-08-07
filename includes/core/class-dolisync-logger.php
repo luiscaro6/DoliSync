@@ -134,6 +134,10 @@ class Dolisync_Logger {
 			require_once DOLISYNC_PLUGIN_DIR . 'includes/database/class-dolisync-schema.php';
 			Dolisync_Schema::ensure_error_stats_table();
 		}
+		if ( in_array( 'correlation_id', $columns, true ) ) {
+			require_once DOLISYNC_PLUGIN_DIR . 'includes/core/class-dolisync-operation-context.php';
+			$insert_data['correlation_id'] = Dolisync_Operation_Context::ensure( 'api' );
+		}
 
 		$total = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$logs_table} WHERE log_level = 'ERROR'" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 		$count_24h = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$logs_table} WHERE log_level = 'ERROR' AND created_at >= (NOW() - INTERVAL 24 HOUR)" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery

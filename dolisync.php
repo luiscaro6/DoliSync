@@ -48,6 +48,7 @@ require_once DOLISYNC_PLUGIN_DIR . 'includes/class-dolisync-activator.php';
 require_once DOLISYNC_PLUGIN_DIR . 'includes/class-dolisync-deactivator.php';
 require_once DOLISYNC_PLUGIN_DIR . 'includes/class-dolisync-cron.php';
 require_once DOLISYNC_PLUGIN_DIR . 'includes/database/class-dolisync-schema.php';
+require_once DOLISYNC_PLUGIN_DIR . 'includes/database/class-dolisync-migrations.php';
 
 register_activation_hook( __FILE__, array( 'Dolisync_Activator', 'activate' ) );
 register_deactivation_hook( __FILE__, array( 'Dolisync_Deactivator', 'deactivate' ) );
@@ -61,9 +62,7 @@ add_action( 'before_woocommerce_init', static function () {
 
 function dolisync_init() {
 	load_plugin_textdomain( 'dolisync', false, dirname( DOLISYNC_PLUGIN_BASENAME ) . '/languages' );
-	Dolisync_Schema::ensure_contact_relations_table();
-
-	// No ejecutar migraciones en cada carga; la tabla se crea en el hook de activación.
+	Dolisync_Migrations::maybe_migrate();
 
 	if ( class_exists( 'WooCommerce' ) ) {
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/woocommerce/class-dolisync-woocommerce-users.php';
