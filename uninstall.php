@@ -14,7 +14,7 @@ foreach ( array( 'dolisync_logs_cache', 'dolisync_config_cache', 'dolisync_admin
 	delete_transient( $transient );
 }
 
-foreach ( array( 'dolisync_hourly_sync', 'dolisync_cleanup_logs', 'dolisync_connection_autocheck', 'dolisync_product_autosync', 'dolisync_stock_autosync', 'dolisync_stock_autosync_batch', 'dolisync_retry_invoice_delivery', 'dolisync_retry_invoice_email' ) as $hook ) {
+foreach ( array( 'dolisync_hourly_sync', 'dolisync_cleanup_logs', 'dolisync_connection_autocheck', 'dolisync_product_autosync', 'dolisync_stock_autosync', 'dolisync_stock_autosync_batch', 'dolisync_retry_invoice_delivery', 'dolisync_retry_invoice_email', 'dolisync_process_order_queue' ) as $hook ) {
 	wp_clear_scheduled_hook( $hook );
 }
 
@@ -111,7 +111,7 @@ foreach ( $options as $option ) {
 	delete_option( $option );
 }
 
-$meta_keys = array( 'dolisync_document_id', '_dolisync_last_import_hash', '_dolisync_last_export_hash', '_dolisync_dolibarr_document_key', '_dolisync_dolibarr_document_hash', '_dolisync_dolibarr_document_signature', '_dolisync_dolibarr_image_uploads', '_dolisync_dolibarr_invoice_pdf_path', '_dolisync_dolibarr_invoice_ref', '_dolisync_dolibarr_invoice_pdf_sent', '_dolisync_dolibarr_invoice_pdf_emailed_at', '_dolisync_dolibarr_invoice_pending_id', '_dolisync_dolibarr_invoice_pdf_retries', '_dolisync_dolibarr_invoice_lines_complete' );
+$meta_keys = array( 'dolisync_document_id', '_dolisync_last_import_hash', '_dolisync_last_export_hash', '_dolisync_dolibarr_document_key', '_dolisync_dolibarr_document_hash', '_dolisync_dolibarr_document_signature', '_dolisync_dolibarr_image_uploads', '_dolisync_dolibarr_invoice_pdf_path', '_dolisync_dolibarr_invoice_ref', '_dolisync_dolibarr_invoice_pdf_sent', '_dolisync_dolibarr_invoice_pdf_emailed_at', '_dolisync_dolibarr_invoice_pending_id', '_dolisync_dolibarr_invoice_pdf_retries', '_dolisync_dolibarr_invoice_lines_complete', '_dolisync_email_history' );
 foreach ( $meta_keys as $meta_key ) {
 	delete_post_meta_by_key( $meta_key );
 }

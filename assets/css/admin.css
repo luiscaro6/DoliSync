@@ -699,3 +699,18 @@
 	.dolisync-settings-app .dolisync-section { padding: 18px; }
 }
 .dolisync-products-panel[hidden]{display:none!important}
+.dolisync-order-progress { padding: 10px 16px; }
+.dolisync-order-progress ol { margin: 8px 0 4px 22px; }
+.dolisync-order-progress li { margin: 5px 0; color: #64748b; }
+.dolisync-order-progress li::marker { color: #16a34a; }
+.dolisync-order-progress li.is-current { color: #0f172a; font-weight: 600; }
+.dolisync-order-progress li.is-current::marker { color: #2271b1; }
+.dolisync-email-history { width: 100%; margin-top: 8px; }
+.dolisync-email-history summary { cursor: pointer; color: #2271b1; font-size: 12px; font-weight: 600; }
+.dolisync-email-history-list { display: grid; gap: 7px; margin-top: 8px; }
+.dolisync-email-history-item { display: flex; gap: 7px; align-items: flex-start; padding: 7px; border: 1px solid #e2e8f0; border-radius: 7px; background: #f8fafc; }
+.dolisync-email-history-item .dashicons { width: 16px; height: 16px; color: #16a34a; font-size: 16px; }
+.dolisync-email-history-item .dashicons-warning { color: #dc2626; }
+.dolisync-email-history-item div { display: grid; gap: 2px; }
+.dolisync-email-history-item strong { font-size: 12px; line-height: 1.25; }
+.dolisync-email-history-item small { margin: 0 !important; font-size: 11px; }

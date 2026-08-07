@@ -15,6 +15,7 @@ class Dolisync_Orders_Page {
 		Dolisync_Schema::ensure_ignored_items_table();
 		add_action( 'wp_ajax_dolisync_orders_catalog', array( __CLASS__, 'ajax_catalog' ) );
 		add_action( 'wp_ajax_dolisync_order_action', array( __CLASS__, 'ajax_order_action' ) );
+		add_action( 'wp_ajax_dolisync_order_queue_progress', array( __CLASS__, 'ajax_queue_progress' ) );
 		add_action( 'wp_ajax_dolisync_order_download_pdf', array( __CLASS__, 'ajax_download_pdf' ) );
 	}
 
@@ -120,6 +121,11 @@ class Dolisync_Orders_Page {
 				}
 				wp_send_json_success( array( 'message' => sprintf( __( '%d pedidos actualizados.', 'dolisync' ), count( $order_ids ) ) ) );
 			}
+			if ( 'retry_sync' === $operation ) {
+				require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/orders/class-dolisync-order-queue.php';
+				Dolisync_Order_Queue::process_now( $order_id );
+				wp_send_json_success( array( 'message' => __( 'Pedido sincronizado y factura enviada al cliente.', 'dolisync' ) ) );
+			}
 			require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/orders/class-dolisync-invoice-pdf.php';
 			$relation = self::get_relation( $order_id );
 			$invoice_id = (int) ( $relation['dolibarr_invoice_id'] ?? 0 );
@@ -165,6 +171,16 @@ class Dolisync_Orders_Page {
 		}
 	}
 
+	public static function ajax_queue_progress() {
+		self::guard_ajax();
+		$order_id = isset( $_POST['order_id'] ) ? absint( wp_unslash( $_POST['order_id'] ) ) : 0;
+		if ( $order_id <= 0 || ! wc_get_order( $order_id ) instanceof WC_Order ) {
+			wp_send_json_error( array( 'message' => __( 'El pedido no existe.', 'dolisync' ) ), 404 );
+		}
+		require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/orders/class-dolisync-order-queue.php';
+		wp_send_json_success( Dolisync_Order_Queue::get_progress( $order_id ) );
+	}
+
 	public static function ajax_download_pdf() {
 		self::guard_ajax();
 		$order_id = isset( $_GET['order_id'] ) ? absint( wp_unslash( $_GET['order_id'] ) ) : 0;
@@ -187,6 +203,7 @@ class Dolisync_Orders_Page {
 
 	private static function build_catalog() {
 		global $wpdb;
+		require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/orders/class-dolisync-invoice-pdf.php';
 		$relation_table = $wpdb->prefix . 'dolisync_order_relations';
 		$relations = array();
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/database/class-dolisync-ignored-items.php';
@@ -218,16 +235,19 @@ class Dolisync_Orders_Page {
 			$path = (string) ( $relation['invoice_pdf_path'] ?? '' );
 			$pdf_available = 'available' === (string) ( $relation['invoice_pdf_status'] ?? '' ) && self::is_local_pdf( $path );
 			$emailed_at = (string) ( $relation['invoice_email_sent_at'] ?? '' );
+			$email_history = self::format_email_history( Dolisync_Invoice_PDF::get_email_history( $order ) );
 			$sync_status = (string) ( $relation['sync_status'] ?? '' );
 			$invoice_id = (int) ( $relation['dolibarr_invoice_id'] ?? 0 );
 			$invoice_status = (string) ( $relation['invoice_status'] ?? '' );
 			$sent_to_dolibarr = $invoice_id > 0 && in_array( $invoice_status, array( 'validated', 'paid' ), true );
-			$has_error = 'error' === $sync_status || ! empty( $relation['last_error_message'] );
+			$has_error = in_array( $sync_status, array( 'error', 'failed' ), true ) || ( ! empty( $relation['last_error_message'] ) && 'queued' !== $sync_status );
 			$email_sent = 'sent' === (string) ( $relation['invoice_email_status'] ?? '' );
 			$has_error = $has_error || 'error' === (string) ( $relation['invoice_pdf_status'] ?? '' ) || in_array( (string) ( $relation['invoice_email_status'] ?? '' ), array( 'error', 'failed' ), true );
 			$overall = $ignored ? 'ignored' : ( $has_error ? 'error' : ( $sent_to_dolibarr && $pdf_available && $email_sent ? 'ok' : 'pending' ) );
 			$date = $order->get_date_created();
-			$name = trim( $order->get_formatted_billing_full_name() );
+			$customer = self::get_current_customer_identity( $order, $relation );
+			$name = $customer['name'];
+			$email_address = $customer['email'];
 			$invoice_ref = (string) ( $relation['invoice_ref'] ?? '' );
 
 			$rows[] = array(
@@ -235,7 +255,7 @@ class Dolisync_Orders_Page {
 				'number'   => (string) $order->get_order_number(),
 				'date'     => $date ? wc_format_datetime( $date ) : '',
 				'customer' => '' !== $name ? $name : __( 'Invitado', 'dolisync' ),
-				'email_address' => (string) $order->get_billing_email(),
+				'email_address' => $email_address,
 				'total'    => trim( str_replace( "\xc2\xa0", ' ', html_entity_decode( wp_strip_all_tags( $order->get_formatted_order_total() ), ENT_QUOTES | ENT_HTML5, get_bloginfo( 'charset' ) ) ) ),
 				'status'   => wc_get_order_status_name( $order->get_status() ),
 				'edit_url' => $order->get_edit_order_url(),
@@ -247,6 +267,8 @@ class Dolisync_Orders_Page {
 					'sync_status'    => $sync_status,
 					'synced_at'      => (string) ( $relation['synced_at'] ?? '' ),
 					'error'          => (string) ( $relation['last_error_message'] ?? '' ),
+					'attempts'       => (int) ( $relation['queue_attempts'] ?? 0 ),
+					'next_attempt_at'=> (string) ( $relation['queue_next_attempt_at'] ?? '' ),
 				),
 				'email' => array(
 					'sent' => $email_sent,
@@ -255,6 +277,7 @@ class Dolisync_Orders_Page {
 					'attempts' => (int) ( $relation['invoice_email_attempts'] ?? 0 ),
 					'next_retry_at' => (string) ( $relation['invoice_email_next_retry_at'] ?? '' ),
 					'error' => (string) ( $relation['invoice_email_last_error'] ?? '' ),
+					'history' => $email_history,
 				),
 				'pdf' => array(
 					'available' => $pdf_available,
@@ -266,10 +289,72 @@ class Dolisync_Orders_Page {
 				'overall' => $overall,
 				'ignored' => $ignored,
 				'ignored_at' => (string) ( $ignored_orders[ $ignored_key ] ?? '' ),
-				'search'  => self::search_key( implode( ' ', array( $id, $order->get_order_number(), $name, $order->get_billing_email(), $invoice_id, $invoice_ref ) ) ),
+				'search'  => self::search_key( implode( ' ', array( $id, $order->get_order_number(), $name, $email_address, $order->get_billing_email(), $invoice_id, $invoice_ref ) ) ),
 			);
 		}
 		return $rows;
+	}
+
+	private static function format_email_history( array $history ) {
+		$labels = array(
+			'order_thanks'            => __( 'Gracias por tu pedido', 'dolisync' ),
+			'invoice_automatic'       => __( 'Factura automática', 'dolisync' ),
+			'invoice_automatic_retry' => __( 'Reintento automático de factura', 'dolisync' ),
+			'invoice_manual'          => __( 'Factura manual', 'dolisync' ),
+			'invoice_unavailable'     => __( 'Aviso de factura no disponible', 'dolisync' ),
+		);
+		$formatted = array();
+		foreach ( $history as $event ) {
+			$type = sanitize_key( (string) ( $event['type'] ?? '' ) );
+			$status = 'accepted' === (string) ( $event['status'] ?? '' ) ? 'accepted' : 'failed';
+			$recorded_at = sanitize_text_field( (string) ( $event['at'] ?? '' ) );
+			$formatted[] = array(
+				'label'  => (string) ( $labels[ $type ] ?? __( 'Email del pedido', 'dolisync' ) ),
+				'status' => $status,
+				'at'     => '' !== $recorded_at ? mysql2date( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), $recorded_at ) : '',
+			);
+		}
+		return $formatted;
+	}
+
+	private static function get_current_customer_identity( WC_Order $order, array $order_relation ) {
+		global $wpdb;
+		$name = trim( $order->get_formatted_billing_full_name() );
+		$email = sanitize_email( (string) $order->get_billing_email() );
+		$user_id = (int) $order->get_user_id();
+		if ( $user_id <= 0 && ! empty( $order_relation['dolibarr_thirdparty_id'] ) ) {
+			$user_id = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+				$wpdb->prepare(
+					"SELECT wp_user_id FROM {$wpdb->prefix}dolisync_contact_relations WHERE dolibarr_contact_id = %d LIMIT 1",
+					(int) $order_relation['dolibarr_thirdparty_id']
+				)
+			);
+		}
+		if ( $user_id <= 0 ) {
+			return array( 'name' => $name, 'email' => $email );
+		}
+
+		$user = get_userdata( $user_id );
+		$first_name = sanitize_text_field( (string) get_user_meta( $user_id, 'first_name', true ) );
+		$last_name = sanitize_text_field( (string) get_user_meta( $user_id, 'last_name', true ) );
+		if ( '' === $first_name ) {
+			$first_name = sanitize_text_field( (string) get_user_meta( $user_id, 'billing_first_name', true ) );
+		}
+		if ( '' === $last_name ) {
+			$last_name = sanitize_text_field( (string) get_user_meta( $user_id, 'billing_last_name', true ) );
+		}
+		$current_name = trim( $first_name . ' ' . $last_name );
+		if ( '' === $current_name && $user instanceof WP_User ) {
+			$current_name = sanitize_text_field( (string) $user->display_name );
+		}
+		if ( $user instanceof WP_User && '' !== sanitize_email( (string) $user->user_email ) ) {
+			$email = sanitize_email( (string) $user->user_email );
+		}
+
+		return array(
+			'name'  => '' !== $current_name ? $current_name : $name,
+			'email' => $email,
+		);
 	}
 
 	private static function guard_ajax() {

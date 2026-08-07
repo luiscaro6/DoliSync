@@ -71,6 +71,7 @@ class Dolisync_Order_Sync {
 		Dolisync_Schema::ensure_order_relations_table();
 		Dolisync_Schema::ensure_contact_relations_table();
 
+		self::progress( $order_id, 'loading', __( 'Cargando y comprobando los datos del pedido…', 'dolisync' ) );
 		$order = self::normalize_order( $order_id, $order );
 		if ( ! $order ) {
 			Dolisync_Action_Logger::log_action( 'pedido', 'sincronización', 'error', sprintf( __( 'No se pudo cargar el pedido WooCommerce %d.', 'dolisync' ), (int) $order_id ), get_current_user_id() );
@@ -85,6 +86,7 @@ class Dolisync_Order_Sync {
 		$order_id = (int) $order->get_id();
 		$relation = self::get_order_relation( $order_id );
 		if ( ! empty( $relation['dolibarr_invoice_id'] ) && in_array( (string) ( $relation['invoice_status'] ?? '' ), array( 'validated', 'paid' ), true ) ) {
+			self::progress( $order_id, 'recovering_pdf', __( 'La factura ya existe. Rescatando el PDF de Dolibarr…', 'dolisync' ) );
 			require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/orders/class-dolisync-invoice-pdf.php';
 			if ( ! Dolisync_Invoice_PDF::has_pdf( $order ) ) {
 				$recovery_api = new Dolisync_API_Client();
@@ -96,6 +98,7 @@ class Dolisync_Order_Sync {
 			return;
 		}
 		$api = new Dolisync_API_Client();
+		self::progress( $order_id, 'customer', __( 'Validando los datos fiscales y preparando el cliente en Dolibarr…', 'dolisync' ) );
 		$document_id = self::get_validated_document_id( $order );
 		if ( '' === $document_id ) {
 			self::upsert_order_relation( $order, array( 'sync_status' => 'error', 'last_error_message' => __( 'El pedido no contiene un documento fiscal válido.', 'dolisync' ) ) );
@@ -117,12 +120,14 @@ class Dolisync_Order_Sync {
 		self::persist_customer_thirdparty_relation( $order, $thirdparty_id, $document_id );
 
 		$invoice_external_ref = 'WC-INVOICE-' . $order_id;
+		self::progress( $order_id, 'invoice_lookup', __( 'Buscando una factura existente para evitar duplicados…', 'dolisync' ) );
 		$existing_invoice_response = $api->get( '/invoices/ref_ext/' . rawurlencode( $invoice_external_ref ) );
 		$dolibarr_invoice_id = ! empty( $existing_invoice_response['success'] ) ? self::extract_dolibarr_id( $existing_invoice_response['data'] ?? null ) : 0;
 		$invoice_already_validated = false;
 		$invoice_was_recovered = $dolibarr_invoice_id > 0;
 
 		if ( $dolibarr_invoice_id > 0 ) {
+			self::progress( $order_id, 'invoice_recovered', __( 'Factura encontrada en Dolibarr. Recuperando su estado…', 'dolisync' ) );
 			$existing_invoice_data = self::first_api_item( $existing_invoice_response['data'] ?? array() );
 			$invoice_already_validated = (int) ( $existing_invoice_data['statut'] ?? $existing_invoice_data['status'] ?? 0 ) > 0;
 			self::upsert_order_relation( $order, array( 'dolibarr_thirdparty_id' => $thirdparty_id, 'dolibarr_order_id' => null, 'dolibarr_invoice_id' => $dolibarr_invoice_id, 'invoice_status' => $invoice_already_validated ? 'validated' : 'draft', 'sync_status' => 'recovered', 'last_error_message' => '' ) );
@@ -133,6 +138,7 @@ class Dolisync_Order_Sync {
 				return;
 			}
 		} else {
+			self::progress( $order_id, 'invoice_create', __( 'Creando la factura en Dolibarr…', 'dolisync' ) );
 			$invoice_response = $api->post( '/invoices', self::build_dolibarr_invoice_payload( $order, $thirdparty_id, $invoice_external_ref ) );
 			if ( empty( $invoice_response['success'] ) ) {
 				self::upsert_order_relation( $order, array( 'dolibarr_thirdparty_id' => $thirdparty_id, 'sync_status' => 'error', 'last_error_message' => (string) ( $invoice_response['message'] ?? __( 'Error creando la factura en Dolibarr.', 'dolisync' ) ) ) );
@@ -152,6 +158,7 @@ class Dolisync_Order_Sync {
 		}
 
 		if ( ! $invoice_already_validated && ! $invoice_was_recovered ) {
+			self::progress( $order_id, 'invoice_lines', __( 'Añadiendo las líneas del pedido a la factura…', 'dolisync' ) );
 			foreach ( self::build_invoice_lines( $order ) as $line ) {
 				$line_response = $api->post( '/invoices/' . $dolibarr_invoice_id . '/lines', $line );
 				if ( empty( $line_response['success'] ) && 'ok' !== (string) ( $line_response['code'] ?? '' ) ) {
@@ -174,6 +181,7 @@ class Dolisync_Order_Sync {
 		}
 
 		if ( ! $invoice_already_validated ) {
+			self::progress( $order_id, 'invoice_validate', __( 'Validando la factura y esperando a VeriFactu…', 'dolisync' ) );
 			$invoice_validate = $api->post( '/invoices/' . $dolibarr_invoice_id . '/validate', array( 'idwarehouse' => 0, 'notrigger' => 0 ) );
 			if ( empty( $invoice_validate['success'] ) ) {
 				self::upsert_order_relation(
@@ -200,6 +208,7 @@ class Dolisync_Order_Sync {
 		}
 
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/orders/class-dolisync-invoice-pdf.php';
+		self::progress( $order_id, 'pdf', __( 'Generando y rescatando el PDF de la factura…', 'dolisync' ) );
 		$pdf_path = Dolisync_Invoice_PDF::generate_and_store( $order, $api, $dolibarr_invoice_id );
 		if ( '' === $pdf_path ) {
 			self::upsert_order_relation( $order, array( 'dolibarr_thirdparty_id' => $thirdparty_id, 'dolibarr_order_id' => null, 'dolibarr_invoice_id' => $dolibarr_invoice_id, 'invoice_status' => 'validated', 'sync_status' => 'error', 'last_error_message' => __( 'La factura está validada, pero no se pudo obtener su PDF fiscal de Dolibarr.', 'dolisync' ) ) );
@@ -222,6 +231,12 @@ class Dolisync_Order_Sync {
 		Dolisync_Action_Logger::log_action( 'factura', 'sincronización', 'finalizado', sprintf( __( 'Pedido WooCommerce %1$d facturado directamente en Dolibarr (factura %2$d validada).', 'dolisync' ), $order_id, $dolibarr_invoice_id ), get_current_user_id() );
 	}
 
+	private static function progress( $order_id, $stage, $message ) {
+		if ( class_exists( 'Dolisync_Order_Queue' ) ) {
+			Dolisync_Order_Queue::set_progress( (int) $order_id, $stage, $message );
+		}
+	}
+
 	private static function normalize_order( $order_id, $order = null ) {
 		if ( $order instanceof WC_Order ) {
 			return $order;
@@ -237,14 +252,28 @@ class Dolisync_Order_Sync {
 
 	private static function get_validated_document_id( WC_Order $order ) {
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/utils/class-dolisync-spanish-document-validator.php';
+		$validator = new Dolisync_Spanish_Document_Validator();
+		$user_id = (int) $order->get_user_id();
+		if ( $user_id > 0 ) {
+			$current_customer_document = get_user_meta( $user_id, 'dolisync_document_id', true );
+			$current_result = $validator->validate( $current_customer_document );
+			if ( ! empty( $current_result['valid'] ) ) {
+				$normalized = (string) $current_result['normalized'];
+				// En un reintento debe prevalecer la corrección realizada en la ficha
+				// del cliente sobre la copia histórica guardada durante el checkout.
+				if ( $normalized !== (string) $order->get_meta( 'dolisync_document_id', true ) ) {
+					$order->update_meta_data( 'dolisync_document_id', $normalized );
+					$order->save_meta_data();
+				}
+				return $normalized;
+			}
+		}
 		$values = array(
 			$order->get_meta( 'dolisync_document_id', true ),
 			$order->get_meta( 'dolisync/document-id', true ),
 			$order->get_meta( '_wc_other/dolisync/document-id', true ),
-			get_user_meta( (int) $order->get_user_id(), 'dolisync_document_id', true ),
 		);
 
-		$validator = new Dolisync_Spanish_Document_Validator();
 		foreach ( $values as $value ) {
 			$result = $validator->validate( $value );
 			if ( ! empty( $result['valid'] ) ) {
@@ -257,6 +286,17 @@ class Dolisync_Order_Sync {
 	private static function resolve_thirdparty_id_for_order( WC_Order $order, Dolisync_API_Client $api, $document_id ) {
 		$email = sanitize_email( (string) $order->get_billing_email() );
 		$user_id = (int) $order->get_user_id();
+		$linked_thirdparty_id = self::get_linked_thirdparty_id( $user_id );
+		if ( $linked_thirdparty_id > 0 ) {
+			$linked_response = $api->get( '/thirdparties/' . $linked_thirdparty_id );
+			$linked_thirdparty = ! empty( $linked_response['success'] ) ? self::first_api_item( $linked_response['data'] ?? array() ) : array();
+			$linked_email = sanitize_email( (string) ( $linked_thirdparty['email'] ?? '' ) );
+			if ( '' !== $linked_email && '' !== $email && hash_equals( strtolower( $linked_email ), strtolower( $email ) ) ) {
+				// La relación local y el email confirman que es el mismo tercero. Esto
+				// permite corregir su DNI sin que el valor antiguo provoque conflicto.
+				return self::update_thirdparty_document( $api, $linked_thirdparty_id, $document_id );
+			}
+		}
 		$identity = Dolisync_Contact_Identity_Resolver::resolve_dolibarr_thirdparty( $api, $document_id, $email );
 		if ( 'conflict' === $identity['status'] ) {
 			require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/contacts/class-dolisync-contact-conflicts.php';
@@ -266,7 +306,7 @@ class Dolisync_Order_Sync {
 			return 0;
 		}
 		if ( 'matched' === $identity['status'] ) {
-			return self::update_thirdparty_from_order( $order, $api, (int) $identity['id'], $document_id );
+			return self::update_thirdparty_document( $api, (int) $identity['id'], $document_id );
 		}
 
 		$payload = self::build_thirdparty_payload( $order, $document_id, true );
@@ -286,6 +326,17 @@ class Dolisync_Order_Sync {
 		}
 
 		return (int) $dolibarr_id;
+	}
+
+	private static function get_linked_thirdparty_id( $user_id ) {
+		global $wpdb;
+		$user_id = absint( $user_id );
+		if ( $user_id <= 0 ) {
+			return 0;
+		}
+		return (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+			$wpdb->prepare( "SELECT dolibarr_contact_id FROM {$wpdb->prefix}dolisync_contact_relations WHERE wp_user_id = %d LIMIT 1", $user_id )
+		);
 	}
 
 	private static function build_thirdparty_payload( WC_Order $order, $document_id, $creating = false ) {
@@ -344,13 +395,21 @@ class Dolisync_Order_Sync {
 		}
 
 		$now = current_time( 'mysql' );
+		$current_first_name = sanitize_text_field( (string) get_user_meta( $user_id, 'billing_first_name', true ) );
+		$current_last_name = sanitize_text_field( (string) get_user_meta( $user_id, 'billing_last_name', true ) );
+		if ( '' === $current_first_name ) {
+			$current_first_name = sanitize_text_field( (string) get_user_meta( $user_id, 'first_name', true ) );
+		}
+		if ( '' === $current_last_name ) {
+			$current_last_name = sanitize_text_field( (string) get_user_meta( $user_id, 'last_name', true ) );
+		}
 		$data = array(
 			'dolibarr_contact_id' => $thirdparty_id,
 			'wp_user_id'          => $user_id,
 			'dni'                 => (string) $document_id,
 			'email'               => sanitize_email( (string) $order->get_billing_email() ),
-			'first_name'          => sanitize_text_field( (string) $order->get_billing_first_name() ),
-			'last_name'           => sanitize_text_field( (string) $order->get_billing_last_name() ),
+			'first_name'          => '' !== $current_first_name ? $current_first_name : sanitize_text_field( (string) $order->get_billing_first_name() ),
+			'last_name'           => '' !== $current_last_name ? $current_last_name : sanitize_text_field( (string) $order->get_billing_last_name() ),
 			'synced_at'           => $now,
 			'source'              => 'woocommerce_order',
 			'updated_at'          => $now,
@@ -369,10 +428,16 @@ class Dolisync_Order_Sync {
 		$wpdb->insert( $table, $data ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 	}
 
-	private static function update_thirdparty_from_order( WC_Order $order, Dolisync_API_Client $api, $thirdparty_id, $document_id ) {
-		$response = $api->put( '/thirdparties/' . (int) $thirdparty_id, self::build_thirdparty_payload( $order, $document_id ) );
+	private static function update_thirdparty_document( Dolisync_API_Client $api, $thirdparty_id, $document_id ) {
+		$response = $api->put(
+			'/thirdparties/' . (int) $thirdparty_id,
+			array(
+				'idprof1' => (string) $document_id,
+				'caller'  => 'dolisync',
+			)
+		);
 		if ( empty( $response['success'] ) ) {
-			Dolisync_Action_Logger::log_action( 'tercero', 'actualización_fiscal', 'error', sprintf( __( 'No se pudieron actualizar el nombre y la dirección fiscal del tercero Dolibarr %1$d: %2$s', 'dolisync' ), (int) $thirdparty_id, (string) ( $response['message'] ?? __( 'Error desconocido', 'dolisync' ) ) ), get_current_user_id() );
+			Dolisync_Action_Logger::log_action( 'tercero', 'actualización_fiscal', 'error', sprintf( __( 'No se pudo actualizar el documento fiscal del tercero Dolibarr %1$d: %2$s', 'dolisync' ), (int) $thirdparty_id, (string) ( $response['message'] ?? __( 'Error desconocido', 'dolisync' ) ) ), get_current_user_id() );
 			return 0;
 		}
 		return (int) $thirdparty_id;

@@ -38,7 +38,7 @@ class Dolisync_Schema {
 			'dolisync_contact_conflicts' => array( 'id' => 'BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT', 'conflict_key' => 'VARCHAR(191) NOT NULL', 'direction' => 'VARCHAR(30) NOT NULL', 'conflict_type' => 'VARCHAR(50) NOT NULL', 'wp_user_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'dolibarr_contact_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'wp_data' => 'LONGTEXT NULL', 'dolibarr_data' => 'LONGTEXT NULL', 'message' => 'LONGTEXT NULL', 'status' => "VARCHAR(20) NOT NULL DEFAULT 'open'", 'resolution' => 'VARCHAR(20) NULL DEFAULT NULL', 'created_at' => 'DATETIME NULL DEFAULT NULL', 'updated_at' => 'DATETIME NULL DEFAULT NULL', 'resolved_at' => 'DATETIME NULL DEFAULT NULL', 'resolved_by' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL' ),
 			'dolisync_product_relations' => array( 'id' => 'BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT', 'dolibarr_product_id' => 'BIGINT(20) UNSIGNED NOT NULL', 'wc_product_id' => 'BIGINT(20) UNSIGNED NOT NULL', 'sku' => "VARCHAR(190) NOT NULL DEFAULT ''", 'name' => "VARCHAR(255) NOT NULL DEFAULT ''", 'description' => 'LONGTEXT NULL', 'short_description' => 'LONGTEXT NULL', 'price' => 'DECIMAL(18,6) NULL DEFAULT NULL', 'currency' => 'VARCHAR(10) NULL DEFAULT NULL', 'stock_qty' => 'DECIMAL(18,6) NULL DEFAULT NULL', 'product_type' => 'VARCHAR(50) NULL DEFAULT NULL', 'status' => 'VARCHAR(20) NULL DEFAULT NULL', 'categories_json' => 'LONGTEXT NULL', 'image_url' => 'LONGTEXT NULL', 'last_sync_status' => 'VARCHAR(20) NULL DEFAULT NULL', 'last_error_message' => 'LONGTEXT NULL', 'first_synced_at' => 'DATETIME NULL DEFAULT NULL', 'synced_at' => 'DATETIME NULL DEFAULT NULL', 'created_at' => 'DATETIME NULL DEFAULT NULL', 'updated_at' => 'DATETIME NULL DEFAULT NULL' ),
 			'dolisync_product_conflicts' => array( 'id' => 'BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT', 'conflict_key' => 'VARCHAR(191) NOT NULL', 'direction' => 'VARCHAR(30) NOT NULL', 'conflict_type' => 'VARCHAR(50) NOT NULL', 'wc_product_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'dolibarr_product_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'wc_data' => 'LONGTEXT NULL', 'dolibarr_data' => 'LONGTEXT NULL', 'message' => 'LONGTEXT NULL', 'status' => "VARCHAR(20) NOT NULL DEFAULT 'open'", 'resolution' => 'VARCHAR(20) NULL DEFAULT NULL', 'created_at' => 'DATETIME NULL DEFAULT NULL', 'updated_at' => 'DATETIME NULL DEFAULT NULL', 'resolved_at' => 'DATETIME NULL DEFAULT NULL', 'resolved_by' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL' ),
-			'dolisync_order_relations' => array( 'id' => 'BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT', 'wc_order_id' => 'BIGINT(20) UNSIGNED NOT NULL', 'wc_order_number' => "VARCHAR(100) NOT NULL DEFAULT ''", 'dolibarr_thirdparty_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'dolibarr_order_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'dolibarr_invoice_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'order_status' => 'VARCHAR(50) NULL DEFAULT NULL', 'invoice_status' => 'VARCHAR(50) NULL DEFAULT NULL', 'sync_status' => 'VARCHAR(20) NULL DEFAULT NULL', 'last_error_message' => 'LONGTEXT NULL', 'invoice_ref' => 'VARCHAR(255) NULL DEFAULT NULL', 'invoice_pdf_path' => 'TEXT NULL', 'invoice_pdf_status' => "VARCHAR(20) NOT NULL DEFAULT 'pending'", 'invoice_pdf_downloaded_at' => 'DATETIME NULL DEFAULT NULL', 'invoice_pdf_last_error' => 'LONGTEXT NULL', 'invoice_email_status' => "VARCHAR(20) NOT NULL DEFAULT 'pending'", 'invoice_email_sent_at' => 'DATETIME NULL DEFAULT NULL', 'invoice_email_next_retry_at' => 'DATETIME NULL DEFAULT NULL', 'invoice_email_last_error' => 'LONGTEXT NULL', 'invoice_email_attempts' => 'INT UNSIGNED NOT NULL DEFAULT 0', 'synced_at' => 'DATETIME NULL DEFAULT NULL', 'created_at' => 'DATETIME NULL DEFAULT NULL', 'updated_at' => 'DATETIME NULL DEFAULT NULL' ),
+			'dolisync_order_relations' => array( 'id' => 'BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT', 'wc_order_id' => 'BIGINT(20) UNSIGNED NOT NULL', 'wc_order_number' => "VARCHAR(100) NOT NULL DEFAULT ''", 'dolibarr_thirdparty_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'dolibarr_order_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'dolibarr_invoice_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'order_status' => 'VARCHAR(50) NULL DEFAULT NULL', 'invoice_status' => 'VARCHAR(50) NULL DEFAULT NULL', 'sync_status' => 'VARCHAR(20) NULL DEFAULT NULL', 'last_error_message' => 'LONGTEXT NULL', 'queue_attempts' => 'INT UNSIGNED NOT NULL DEFAULT 0', 'queue_next_attempt_at' => 'DATETIME NULL DEFAULT NULL', 'queue_locked_at' => 'DATETIME NULL DEFAULT NULL', 'invoice_ref' => 'VARCHAR(255) NULL DEFAULT NULL', 'invoice_pdf_path' => 'TEXT NULL', 'invoice_pdf_status' => "VARCHAR(20) NOT NULL DEFAULT 'pending'", 'invoice_pdf_downloaded_at' => 'DATETIME NULL DEFAULT NULL', 'invoice_pdf_last_error' => 'LONGTEXT NULL', 'invoice_email_status' => "VARCHAR(20) NOT NULL DEFAULT 'pending'", 'invoice_email_sent_at' => 'DATETIME NULL DEFAULT NULL', 'invoice_email_next_retry_at' => 'DATETIME NULL DEFAULT NULL', 'invoice_email_last_error' => 'LONGTEXT NULL', 'invoice_email_attempts' => 'INT UNSIGNED NOT NULL DEFAULT 0', 'synced_at' => 'DATETIME NULL DEFAULT NULL', 'created_at' => 'DATETIME NULL DEFAULT NULL', 'updated_at' => 'DATETIME NULL DEFAULT NULL' ),
 			'dolisync_ignored_items' => array( 'id' => 'BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT', 'resource_type' => 'VARCHAR(20) NOT NULL', 'wc_id' => 'BIGINT(20) UNSIGNED NOT NULL DEFAULT 0', 'dolibarr_id' => 'BIGINT(20) UNSIGNED NOT NULL DEFAULT 0', 'ignored_by' => 'BIGINT(20) UNSIGNED NOT NULL DEFAULT 0', 'ignored_at' => 'DATETIME NOT NULL', 'updated_at' => 'DATETIME NOT NULL' ),
 			'dolisync_product_category_mappings' => array( 'id' => 'BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT', 'dolibarr_category_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'dolibarr_parent_category_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'wc_category_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'wc_parent_category_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'category_name' => "VARCHAR(255) NOT NULL DEFAULT ''", 'synced_at' => 'DATETIME NULL DEFAULT NULL', 'created_at' => 'DATETIME NULL DEFAULT NULL', 'updated_at' => 'DATETIME NULL DEFAULT NULL' ),
 			'dolisync_product_variation_relations' => array( 'id' => 'BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT', 'dolibarr_product_id' => 'BIGINT(20) UNSIGNED NOT NULL', 'wc_product_id' => 'BIGINT(20) UNSIGNED NOT NULL', 'dolibarr_variation_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'dolibarr_combination_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'wc_variation_id' => 'BIGINT(20) UNSIGNED NOT NULL', 'sku' => "VARCHAR(190) NOT NULL DEFAULT ''", 'price' => 'DECIMAL(18,6) NULL DEFAULT NULL', 'stock_qty' => 'DECIMAL(18,6) NULL DEFAULT NULL', 'attributes_json' => 'LONGTEXT NULL', 'synced_at' => 'DATETIME NULL DEFAULT NULL', 'created_at' => 'DATETIME NULL DEFAULT NULL', 'updated_at' => 'DATETIME NULL DEFAULT NULL' ),
@@ -288,15 +288,16 @@ class Dolisync_Schema {
     /**
      * Asegura la tabla de relaciones entre pedidos WooCommerce y Dolibarr.
      */
-    public static function ensure_order_relations_table() {
+	public static function ensure_order_relations_table() {
         global $wpdb;
 
         $table = $wpdb->prefix . 'dolisync_order_relations';
         $charset_collate = $wpdb->get_charset_collate();
 
         $exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-        if ( $exists === $table ) {
-            return;
+		if ( $exists === $table ) {
+			self::ensure_order_queue_columns();
+			return;
         }
 
         $sql = "CREATE TABLE {$table} (
@@ -310,6 +311,9 @@ class Dolisync_Schema {
             invoice_status VARCHAR(50) NULL DEFAULT NULL,
             sync_status VARCHAR(20) NULL DEFAULT NULL,
             last_error_message LONGTEXT NULL,
+			queue_attempts INT UNSIGNED NOT NULL DEFAULT 0,
+			queue_next_attempt_at DATETIME NULL DEFAULT NULL,
+			queue_locked_at DATETIME NULL DEFAULT NULL,
 			invoice_ref VARCHAR(255) NULL DEFAULT NULL,
 			invoice_pdf_path TEXT NULL,
 			invoice_pdf_status VARCHAR(20) NOT NULL DEFAULT 'pending',
@@ -332,6 +336,22 @@ class Dolisync_Schema {
 
 		self::execute_schema_query( $sql, 'crear tabla de relaciones de pedidos' );
     }
+
+	public static function ensure_order_queue_columns() {
+		global $wpdb;
+		$table = $wpdb->prefix . 'dolisync_order_relations';
+		$columns = (array) $wpdb->get_col( "DESCRIBE `{$table}`", 0 ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		$required = array(
+			'queue_attempts' => 'INT UNSIGNED NOT NULL DEFAULT 0',
+			'queue_next_attempt_at' => 'DATETIME NULL DEFAULT NULL',
+			'queue_locked_at' => 'DATETIME NULL DEFAULT NULL',
+		);
+		foreach ( $required as $column => $definition ) {
+			if ( ! in_array( $column, $columns, true ) ) {
+				self::execute_schema_query( "ALTER TABLE `{$table}` ADD COLUMN `{$column}` {$definition}", "añadir {$table}.{$column}" );
+			}
+		}
+	}
 
 	public static function ensure_ignored_items_table() {
 		global $wpdb;

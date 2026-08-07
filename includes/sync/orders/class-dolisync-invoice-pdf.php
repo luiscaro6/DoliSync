@@ -13,6 +13,7 @@ class Dolisync_Invoice_PDF {
 	private const META_PENDING_ID = '_dolisync_dolibarr_invoice_pending_id';
 	private const META_RETRY_COUNT = '_dolisync_dolibarr_invoice_pdf_retries';
 	private const META_EMAILED_AT = '_dolisync_dolibarr_invoice_pdf_emailed_at';
+	private const META_EMAIL_HISTORY = '_dolisync_email_history';
 	private const MAX_PDF_BYTES = 26214400;
 	private const MAX_EMAIL_ATTEMPTS = 3;
 	private const EMAIL_RETRY_DELAY = 300;
@@ -24,11 +25,9 @@ class Dolisync_Invoice_PDF {
 			return;
 		}
 		self::$initialized = true;
-		add_filter( 'woocommerce_email_attachments', array( __CLASS__, 'attach_to_email' ), 10, 4 );
 		add_action( 'wp_mail_succeeded', array( __CLASS__, 'on_mail_succeeded' ), 10, 1 );
 		add_action( 'wp_mail_failed', array( __CLASS__, 'on_mail_failed' ), 10, 1 );
 		add_action( 'woocommerce_email_sent', array( __CLASS__, 'on_woocommerce_email_sent' ), 10, 3 );
-		add_action( 'woocommerce_order_status_changed', array( __CLASS__, 'on_order_status_changed' ), 20, 4 );
 		add_action( 'dolisync_retry_invoice_delivery', array( __CLASS__, 'retry_delivery' ), 10, 2 );
 		add_action( 'dolisync_retry_invoice_email', array( __CLASS__, 'retry_email' ), 10, 1 );
 	}
@@ -128,12 +127,77 @@ class Dolisync_Invoice_PDF {
 
 	public static function send_customer_invoice( WC_Order $order ) {
 		self::init();
-		// El PDF se adjunta al correo normal de pedido en attach_to_email(). No se
-		// dispara un segundo correo de "factura" para evitar duplicar mensajes.
-		return self::has_pdf( $order );
+		// El correo normal de agradecimiento no espera a Dolibarr. La factura se
+		// envía después, desde el worker, como un mensaje independiente.
+		return self::has_pdf( $order ) && self::send_invoice_mail( $order, 'invoice_automatic' );
 	}
 
 	public static function resend_customer_invoice( WC_Order $order ) {
+		self::init();
+		return self::has_pdf( $order ) && self::send_invoice_mail( $order, 'invoice_manual' );
+	}
+
+	public static function send_invoice_unavailable_notice( WC_Order $order ) {
+		if ( '' === (string) $order->get_billing_email() ) {
+			return false;
+		}
+		$subject = sprintf( __( 'La factura de tu pedido #%s', 'dolisync' ), $order->get_order_number() );
+		$body = sprintf( __( 'Hola %1$s,<br><br>Gracias por tu pedido #%2$s. Tu factura aún no está disponible. La estamos revisando y te la remitiremos en cuanto esté preparada.<br><br>%3$s', 'dolisync' ), esc_html( self::get_current_customer_name( $order ) ), esc_html( $order->get_order_number() ), esc_html( wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ) ) );
+		$sent = wp_mail( $order->get_billing_email(), $subject, $body, array( 'Content-Type: text/html; charset=UTF-8' ) );
+		self::record_email( $order, 'invoice_unavailable', $sent );
+		self::update_relation( $order, array( 'invoice_email_status' => $sent ? 'unavailable_sent' : 'failed', 'invoice_email_sent_at' => $sent ? current_time( 'mysql' ) : null, 'invoice_email_last_error' => $sent ? '' : __( 'No se pudo enviar el aviso de factura no disponible.', 'dolisync' ) ) );
+		return $sent;
+	}
+
+	private static function send_invoice_mail( WC_Order $order, $type ) {
+		$path = self::get_pdf_path( $order );
+		if ( ! self::is_safe_stored_pdf( $path ) || '' === (string) $order->get_billing_email() ) {
+			return false;
+		}
+		$subject = sprintf( __( 'Aquí tienes la factura de tu pedido #%s', 'dolisync' ), $order->get_order_number() );
+		$body = sprintf( __( 'Hola %1$s,<br><br>Gracias por tu pedido #%2$s. Tu factura ya está disponible y la encontrarás adjunta a este correo.<br><br>%3$s', 'dolisync' ), esc_html( self::get_current_customer_name( $order ) ), esc_html( $order->get_order_number() ), esc_html( wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ) ) );
+		self::increment_email_attempts( $order, 'sending', '', true );
+		self::$pending_email_attachments[ wp_normalize_path( $path ) ] = $order->get_id();
+		$sent = wp_mail( $order->get_billing_email(), $subject, $body, array( 'Content-Type: text/html; charset=UTF-8' ), array( $path ) );
+		self::record_email( $order, $type, $sent );
+		if ( ! $sent ) {
+			self::update_relation( $order, array( 'invoice_email_status' => 'error', 'invoice_email_last_error' => __( 'El servidor de correo rechazó el envío de la factura.', 'dolisync' ) ) );
+			self::queue_email_retry( $order );
+		}
+		return $sent;
+	}
+
+	private static function get_current_customer_name( WC_Order $order ) {
+		global $wpdb;
+		$user_id = (int) $order->get_user_id();
+		if ( $user_id <= 0 ) {
+			$thirdparty_id = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+				$wpdb->prepare( "SELECT dolibarr_thirdparty_id FROM {$wpdb->prefix}dolisync_order_relations WHERE wc_order_id = %d LIMIT 1", $order->get_id() )
+			);
+			if ( $thirdparty_id > 0 ) {
+				$user_id = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+					$wpdb->prepare( "SELECT wp_user_id FROM {$wpdb->prefix}dolisync_contact_relations WHERE dolibarr_contact_id = %d LIMIT 1", $thirdparty_id )
+				);
+			}
+		}
+		if ( $user_id > 0 ) {
+			$first_name = sanitize_text_field( (string) get_user_meta( $user_id, 'first_name', true ) );
+			if ( '' === $first_name ) {
+				$first_name = sanitize_text_field( (string) get_user_meta( $user_id, 'billing_first_name', true ) );
+			}
+			if ( '' !== $first_name ) {
+				return $first_name;
+			}
+			$user = get_userdata( $user_id );
+			if ( $user instanceof WP_User && '' !== trim( (string) $user->display_name ) ) {
+				return sanitize_text_field( (string) $user->display_name );
+			}
+		}
+		$name = sanitize_text_field( (string) $order->get_billing_first_name() );
+		return '' !== $name ? $name : __( 'cliente', 'dolisync' );
+	}
+
+	private static function legacy_resend_customer_invoice( WC_Order $order ) {
 		self::init();
 		if ( ! self::has_pdf( $order ) || '' === (string) $order->get_billing_email() ) {
 			return false;
@@ -198,7 +262,7 @@ class Dolisync_Invoice_PDF {
 			return;
 		}
 		self::update_relation( $order, array( 'invoice_email_status' => 'retrying', 'invoice_email_next_retry_at' => null ) );
-		self::resend_customer_invoice( $order );
+		self::send_invoice_mail( $order, 'invoice_automatic_retry' );
 	}
 
 	public static function attach_to_email( $attachments, $email_id, $object, $email = null ) {
@@ -264,18 +328,28 @@ class Dolisync_Invoice_PDF {
 			return;
 		}
 		$order = is_object( $email ) && isset( $email->object ) ? $email->object : null;
-		if ( ! $order instanceof WC_Order || ! self::has_pdf( $order ) ) {
+		if ( ! $order instanceof WC_Order ) {
 			return;
 		}
-		if ( $sent ) {
-			$sent_at = current_time( 'mysql' );
-			$order->update_meta_data( self::META_EMAILED_AT, $sent_at );
-			$order->save_meta_data();
-			self::update_relation( $order, array( 'invoice_email_status' => 'sent', 'invoice_email_sent_at' => $sent_at, 'invoice_email_next_retry_at' => null, 'invoice_email_last_error' => '' ) );
-			return;
-		}
-		self::update_relation( $order, array( 'invoice_email_status' => 'error', 'invoice_email_last_error' => __( 'WooCommerce o el transportador SMTP devolvió un fallo al intentar enviar el correo.', 'dolisync' ) ) );
-		self::queue_email_retry( $order );
+		self::record_email( $order, 'order_thanks', (bool) $sent );
+	}
+
+	public static function get_email_history( WC_Order $order ) {
+		$history = $order->get_meta( self::META_EMAIL_HISTORY, true );
+		return is_array( $history ) ? array_reverse( $history ) : array();
+	}
+
+	private static function record_email( WC_Order $order, $type, $sent ) {
+		$history = $order->get_meta( self::META_EMAIL_HISTORY, true );
+		$history = is_array( $history ) ? $history : array();
+		$history[] = array(
+			'type'   => sanitize_key( $type ),
+			'status' => $sent ? 'accepted' : 'failed',
+			'at'     => current_time( 'mysql' ),
+		);
+		$history = array_slice( $history, -30 );
+		$order->update_meta_data( self::META_EMAIL_HISTORY, $history );
+		$order->save_meta_data();
 	}
 
 	private static function queue_email_retry( WC_Order $order ) {

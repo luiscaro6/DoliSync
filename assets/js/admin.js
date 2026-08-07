@@ -840,14 +840,27 @@ function dolisyncInitOrdersCatalog() {
 	}
 
 	function emailStatusHtml(email) {
+		const history = Array.isArray(email.history) ? email.history : [];
+		const historyHtml = history.length ? '<details class="dolisync-email-history"><summary>Ver emails enviados (' + history.length + ')</summary><div class="dolisync-email-history-list">' + history.map(function (event) {
+			const accepted = event.status === 'accepted';
+			return '<div class="dolisync-email-history-item"><span class="dashicons ' + (accepted ? 'dashicons-yes-alt' : 'dashicons-warning') + '"></span><div><strong>' + esc(event.label) + '</strong><small>' + esc(event.at || 'Sin fecha') + ' · ' + (accepted ? 'Aceptado por el servidor' : 'Error de envío') + '</small></div></div>';
+		}).join('') + '</div></details>' : '<small>Sin historial registrado</small>';
+		let statusHtml = '';
 		if (email.sent) {
-			return '<span class="dolisync-match dolisync-match-ok"><span class="dashicons dashicons-yes-alt"></span>Aceptado por el servidor</span>';
+			statusHtml = '<span class="dolisync-match dolisync-match-ok"><span class="dashicons dashicons-yes-alt"></span>Aceptado por el servidor</span>';
+			return statusHtml + historyHtml;
 		}
 		if (email.status === 'queued' || email.status === 'retrying' || email.status === 'sending') {
 			const label = email.status === 'queued' ? 'En cola para reintento' : (email.status === 'retrying' ? 'Reintentando' : 'Enviando');
-			return '<span class="dolisync-match dolisync-match-warning"><span class="dashicons dashicons-update"></span>' + label + '</span>';
+			statusHtml = '<span class="dolisync-match dolisync-match-warning"><span class="dashicons dashicons-update"></span>' + label + '</span>';
+			return statusHtml + historyHtml;
 		}
-		return '<span class="dolisync-match dolisync-match-missing"><span class="dashicons dashicons-minus"></span>' + (email.status === 'failed' ? 'Fallido' : 'Pendiente') + '</span>';
+		if (email.status === 'unavailable_sent') {
+			statusHtml = '<span class="dolisync-match dolisync-match-warning"><span class="dashicons dashicons-email-alt"></span>Aviso enviado</span>';
+			return statusHtml + historyHtml;
+		}
+		statusHtml = '<span class="dolisync-match dolisync-match-missing"><span class="dashicons dashicons-minus"></span>' + (email.status === 'failed' ? 'Fallido' : 'Pendiente') + '</span>';
+		return statusHtml + historyHtml;
 	}
 
 	function render() {
@@ -869,6 +882,14 @@ function dolisyncInitOrdersCatalog() {
 					'<td class="dolisync-status-cell">' + (row.ignored ? omitted : badge(pdf.available, 'PDF disponible', 'PDF no disponible') + '<small class="dolisync-order-filename" title="' + esc(pdf.filename || '') + '">' + esc(pdf.filename || '') + '</small>' + (pdf.downloaded_at ? '<small>' + esc(pdf.downloaded_at) + '</small>' : '') + (pdf.error ? '<small class="dolisync-order-error">' + esc(pdf.error) + '</small>' : '')) + '</td>' +
 					'<td><div class="dolisync-row-actions dolisync-order-actions" data-order-id="' + esc(row.id) + '"><button class="button dolisync-order-action" data-operation="refresh" ' + (!doli.invoice_id || row.ignored ? 'disabled' : '') + '><span class="dashicons dashicons-update"></span><span>Actualizar</span></button><button class="button dolisync-order-action" data-operation="resend_email" ' + (!doli.invoice_id || row.ignored ? 'disabled' : '') + '><span class="dashicons dashicons-email-alt"></span><span>Reenviar email</span></button><a class="button dolisync-order-download ' + (!pdf.available || row.ignored ? 'disabled' : '') + '" href="' + esc(DoliSync.ajaxUrl + '?action=dolisync_order_download_pdf&nonce=' + encodeURIComponent(DoliSync.nonce) + '&order_id=' + row.id) + '" ' + (!pdf.available || row.ignored ? 'aria-disabled="true"' : '') + '><span class="dashicons dashicons-download"></span><span>Descargar PDF</span></a><button class="button dolisync-order-action" data-operation="' + (row.ignored ? 'restore' : 'ignore') + '"><span class="dashicons ' + (row.ignored ? 'dashicons-undo' : 'dashicons-hidden') + '"></span><span>' + (row.ignored ? 'Restaurar' : 'Omitir') + '</span></button></div></td></tr>';
 			}).join('') + '</tbody></table>');
+			visible.forEach(function (row) {
+				const $actions = jQuery('.dolisync-order-actions[data-order-id="' + Number(row.id) + '"]');
+				const doli = row.dolibarr || {};
+				$actions.prepend('<button class="button dolisync-order-action" data-operation="retry_sync" ' + (row.ignored || doli.sent ? 'disabled' : '') + '><span class="dashicons dashicons-controls-repeat"></span><span>Reintentar</span></button>');
+				if (!row.ignored) {
+					$actions.closest('tr').find('.dolisync-status-cell').first().append('<small>Intentos de cola: ' + esc(doli.attempts || 0) + (doli.next_attempt_at ? ' · Próximo: ' + esc(doli.next_attempt_at) : '') + '</small>');
+				}
+			});
 		}
 		const pages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
 		jQuery('#dolisync-orders-pagination').html('<button class="button" data-page="' + (page - 1) + '" ' + (page <= 1 ? 'disabled' : '') + '>← Anterior</button><span>Página ' + page + ' de ' + pages + '</span><button class="button" data-page="' + (page + 1) + '" ' + (page >= pages ? 'disabled' : '') + '>Siguiente →</button>');
@@ -939,9 +960,45 @@ function dolisyncInitOrdersCatalog() {
 	jQuery(document).on('click', '.dolisync-order-action', function () {
 		const $button = jQuery(this);
 		const $actions = $button.closest('.dolisync-order-actions');
+		const operation = $button.data('operation');
+		const orderId = Number($actions.data('order-id'));
 		$actions.find('.button').addClass('disabled').prop('disabled', true);
 		$button.addClass('is-busy');
-		jQuery.post(DoliSync.ajaxUrl, {action: 'dolisync_order_action', nonce: DoliSync.nonce, order_id: $actions.data('order-id'), operation: $button.data('operation')}).done(function (response) {
+		if (operation === 'retry_sync') {
+			const progressMessages = [];
+			let lastStage = '';
+			const renderProgress = function (progress) {
+				if (progress.stage && progress.stage !== lastStage) {
+					lastStage = progress.stage;
+					progressMessages.push(progress.message || progress.stage);
+				}
+				jQuery('#dolisync-orders-notice').html('<div class="notice notice-info inline dolisync-order-progress"><p><strong>Sincronizando el pedido #' + esc(orderId) + '</strong></p><ol>' + progressMessages.map(function (message, index) { return '<li' + (index === progressMessages.length - 1 ? ' class="is-current"' : '') + '>' + esc(message) + '</li>'; }).join('') + '</ol></div>');
+			};
+			const poll = window.setInterval(function () {
+				jQuery.post(DoliSync.ajaxUrl, {action: 'dolisync_order_queue_progress', nonce: DoliSync.nonce, order_id: orderId}).done(function (response) {
+					if (response.success) { renderProgress(response.data || {}); }
+				});
+			}, 700);
+			renderProgress({stage: 'request', message: 'Solicitando el reintento inmediato…'});
+			jQuery.post(DoliSync.ajaxUrl, {action: 'dolisync_order_action', nonce: DoliSync.nonce, order_id: orderId, operation: operation}).done(function (response) {
+				window.clearInterval(poll);
+				if (!response.success) {
+					jQuery('#dolisync-orders-notice').html('<div class="notice notice-error inline"><p><strong>La sincronización se ha detenido</strong></p><ol>' + progressMessages.map(function (message) { return '<li>' + esc(message) + '</li>'; }).join('') + '</ol><p>' + esc(response.data && response.data.message ? response.data.message : 'No se pudo completar la sincronización.') + '</p></div>');
+					return;
+				}
+				progressMessages.push(response.data.message);
+				jQuery('#dolisync-orders-notice').html('<div class="notice notice-success inline"><p><strong>✓ Proceso completado</strong></p><ol>' + progressMessages.map(function (message) { return '<li>' + esc(message) + '</li>'; }).join('') + '</ol></div>');
+				loadOrders(false);
+			}).fail(function (xhr) {
+				window.clearInterval(poll);
+				jQuery('#dolisync-orders-notice').html('<div class="notice notice-error inline"><p><strong>La sincronización se ha detenido</strong></p><ol>' + progressMessages.map(function (message) { return '<li>' + esc(message) + '</li>'; }).join('') + '</ol><p>' + dolisyncAjaxError(xhr, 'No se pudo completar la sincronización.') + '</p></div>');
+			}).always(function () {
+				$button.removeClass('is-busy');
+				$actions.find('.button').removeClass('disabled').prop('disabled', false);
+			});
+			return;
+		}
+		jQuery.post(DoliSync.ajaxUrl, {action: 'dolisync_order_action', nonce: DoliSync.nonce, order_id: orderId, operation: operation}).done(function (response) {
 			if (!response.success) {
 				jQuery('#dolisync-orders-notice').html('<div class="notice notice-error inline"><p>' + esc(response.data && response.data.message ? response.data.message : 'No se pudo completar la acción.') + '</p></div>');
 				return;

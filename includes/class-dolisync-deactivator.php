@@ -24,6 +24,7 @@ class Dolisync_Deactivator {
 			wp_clear_scheduled_hook( 'dolisync_stock_autosync_batch' );
 			wp_clear_scheduled_hook( 'dolisync_retry_invoice_delivery' );
 			wp_clear_scheduled_hook( 'dolisync_retry_invoice_email' );
+			wp_clear_scheduled_hook( 'dolisync_process_order_queue' );
 		}
 	}
 
@@ -31,6 +32,7 @@ class Dolisync_Deactivator {
 		delete_transient( 'dolisync_logs_cache' );
 		delete_transient( 'dolisync_config_cache' );
 		delete_transient( 'dolisync_stock_sync_lock' );
+		delete_transient( 'dolisync_order_queue_watchdog' );
 		delete_option( 'dolisync_stock_sync_lock' );
 		delete_option( 'dolisync_lock_products_dolibarr_to_woo' );
 		delete_option( 'dolisync_lock_products_woo_to_dolibarr' );
