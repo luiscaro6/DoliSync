@@ -448,7 +448,7 @@ jQuery(function ($) {
         const $button = $(this);
         const $result = $('#dolisync-product-sync-result');
         const nonce = $button.data('nonce');
-        const totals = {created: 0, mapped: 0, updated: 0, skipped: 0, errors: 0};
+        const totals = {created: 0, mapped: 0, updated: 0, conflicts: 0, skipped: 0, errors: 0};
         let runId = '';
 
         $button.prop('disabled', true);
@@ -474,10 +474,11 @@ jQuery(function ($) {
                         runPage(Number(pagination.next_page));
                         return;
                     }
-                    let html = '<ul style="list-style: disc; margin-left: 20px;"><li>Creados: ' + totals.created + '</li><li>Mapeados por SKU o nombre: ' + totals.mapped + '</li><li>Actualizados: ' + totals.updated + '</li><li>Omitidos: ' + totals.skipped + '</li><li>Errores: ' + totals.errors + '</li></ul>';
-					const noticeClass = totals.errors > 0 ? 'notice-warning' : 'notice-success';
-					const heading = totals.errors > 0 ? 'Sincronización completada con incidencias.' : 'Sincronización completada.';
-					$result.html('<div class="notice ' + noticeClass + ' inline"><p><strong>' + (totals.errors > 0 ? '⚠ ' : '✓ ') + heading + '</strong></p>' + html + '</div>');
+                    let html = '<ul style="list-style: disc; margin-left: 20px;"><li>Creados: ' + totals.created + '</li><li>Mapeados por SKU o nombre: ' + totals.mapped + '</li><li>Actualizados: ' + totals.updated + '</li><li>Conflictos: ' + totals.conflicts + '</li><li>Omitidos: ' + totals.skipped + '</li><li>Errores: ' + totals.errors + '</li></ul>';
+					const hasIncidents = totals.errors > 0 || totals.conflicts > 0;
+					const noticeClass = hasIncidents ? 'notice-warning' : 'notice-success';
+					const heading = hasIncidents ? 'Sincronización completada con incidencias.' : 'Sincronización completada.';
+					$result.html('<div class="notice ' + noticeClass + ' inline"><p><strong>' + (hasIncidents ? '⚠ ' : '✓ ') + heading + '</strong></p>' + html + '</div>');
                     $button.prop('disabled', false);
                     setTimeout(function () { location.reload(); }, 2000);
                 },

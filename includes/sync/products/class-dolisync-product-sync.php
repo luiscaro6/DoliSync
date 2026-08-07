@@ -257,7 +257,7 @@ class Dolisync_Product_Sync {
 							'name' => $wc_name,
 							'parent_id' => $mapped_parent_id,
 						);
-						$this->sync_woocommerce_category_term( $wc_category_id, $wc_name, $mapped_parent_id );
+						$this->sync_woocommerce_category_term( $wc_category_id, $wc_name, $wc_parent_id );
 					} else {
 						$stats['errors']++;
 						continue;
@@ -268,7 +268,7 @@ class Dolisync_Product_Sync {
 					$dolibarr_to_wc_map[ $dolibarr_category_id ] = $wc_category_id;
 					$wc_to_dolibarr_map[ $wc_category_id ] = $dolibarr_category_id;
 					$used_woocommerce_ids[ $wc_category_id ] = true;
-					$this->sync_woocommerce_category_term( $wc_category_id, $dolibarr_name, $mapped_parent_id );
+					$this->sync_woocommerce_category_term( $wc_category_id, $dolibarr_name, $wc_parent_id );
 				}
 			}
 
@@ -317,6 +317,10 @@ class Dolisync_Product_Sync {
 					$used_woocommerce_ids[ $wc_category_id ] = true;
 					$this->sync_woocommerce_category_term( $wc_category_id, $dolibarr_name, $mapped_parent_term_id );
 				}
+			}
+			if ( ! $this->sync_woocommerce_category_term( $wc_category_id, $dolibarr_name, $mapped_parent_term_id ) ) {
+				$stats['errors']++;
+				continue;
 			}
 
 			$mapping_state = $this->upsert_category_mapping_row( $dolibarr_category_id, $dolibarr_parent_id > 0 ? $dolibarr_parent_id : $dolibarr_root_id, $wc_category_id, $mapped_parent_term_id, $dolibarr_name );
@@ -969,7 +973,13 @@ class Dolisync_Product_Sync {
 	private function fetch_dolibarr_variants( $dolibarr_product_id ) {
 		$response = $this->api_client->get( '/products/' . $dolibarr_product_id . '/variants', array( 'includestock' => 1 ) );
 		if ( empty( $response['success'] ) ) {
-			return array();
+			throw new RuntimeException(
+				sprintf(
+					__( 'No se pudieron consultar las variantes del producto Dolibarr %1$d: %2$s', 'dolisync' ),
+					(int) $dolibarr_product_id,
+					(string) ( $response['message'] ?? __( 'Dolibarr no indicó el motivo.', 'dolisync' ) )
+				)
+			);
 		}
 
 		$variants = array();
@@ -978,13 +988,27 @@ class Dolisync_Product_Sync {
 				continue;
 			}
 			$child_id = (int) ( $combination['fk_product_child'] ?? 0 );
-			$child = array();
-			if ( $child_id > 0 ) {
-				$child_response = $this->api_client->get( '/products/' . $child_id, array( 'includestockdata' => 1, 'includeparentid' => 1 ) );
-				if ( ! empty( $child_response['success'] ) ) {
-					$child = $this->normalize_api_array( $child_response['data'] ?? array() );
-				}
+			if ( $child_id <= 0 ) {
+				throw new RuntimeException(
+					sprintf(
+						__( 'Dolibarr devolvió una combinación sin producto hijo para el producto %d.', 'dolisync' ),
+						(int) $dolibarr_product_id
+					)
+				);
 			}
+			$child = array();
+			$child_response = $this->api_client->get( '/products/' . $child_id, array( 'includestockdata' => 1, 'includeparentid' => 1 ) );
+			if ( empty( $child_response['success'] ) ) {
+				throw new RuntimeException(
+					sprintf(
+						__( 'No se pudo consultar la variante Dolibarr %1$d del producto %2$d: %3$s', 'dolisync' ),
+						$child_id,
+						(int) $dolibarr_product_id,
+						(string) ( $child_response['message'] ?? __( 'Dolibarr no indicó el motivo.', 'dolisync' ) )
+					)
+				);
+			}
+			$child = $this->normalize_api_array( $child_response['data'] ?? array() );
 
 			$attributes = array();
 			foreach ( (array) ( $combination['attributes'] ?? array() ) as $pair ) {
@@ -1288,7 +1312,9 @@ class Dolisync_Product_Sync {
 					continue;
 				}
 
-				$term_id = $this->resolve_woocommerce_term_id_for_dolibarr_category( $dolibarr_category_id, $name, (int) ( $category['parent_id'] ?? 0 ) );
+				$dolibarr_parent_id = (int) ( $category['parent_id'] ?? 0 );
+				$wc_parent_id = $this->resolve_woocommerce_parent_category_id( $dolibarr_parent_id );
+				$term_id = $this->resolve_woocommerce_term_id_for_dolibarr_category( $dolibarr_category_id, $name, $wc_parent_id );
 
 				if ( $term_id <= 0 ) {
 					continue;
@@ -1298,7 +1324,7 @@ class Dolisync_Product_Sync {
 				$term = get_term( $term_id, 'product_cat' );
 				$this->upsert_category_mapping_row(
 					$dolibarr_category_id,
-					(int) ( $category['parent_id'] ?? 0 ),
+					$dolibarr_parent_id,
 					$term_id,
 					( $term && ! is_wp_error( $term ) ) ? (int) $term->parent : 0,
 					$name
@@ -1322,6 +1348,41 @@ class Dolisync_Product_Sync {
 			array( '%s', '%s' ),
 			array( '%d' )
 		); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+	}
+
+	/**
+	 * Traduce un ID de categoría padre de Dolibarr a su término de WooCommerce.
+	 * Los identificadores de ambos sistemas no son intercambiables.
+	 */
+	private function resolve_woocommerce_parent_category_id( $dolibarr_parent_id ) {
+		$dolibarr_parent_id = (int) $dolibarr_parent_id;
+		if ( $dolibarr_parent_id <= 0 ) {
+			return 0;
+		}
+
+		$mapping = $this->get_mapping_by_dolibarr_category_id( $dolibarr_parent_id );
+		$wc_parent_id = (int) ( $mapping['wc_category_id'] ?? 0 );
+		if ( $wc_parent_id <= 0 ) {
+			throw new RuntimeException(
+				sprintf(
+					__( 'La categoría padre Dolibarr %d aún no está vinculada con WooCommerce.', 'dolisync' ),
+					$dolibarr_parent_id
+				)
+			);
+		}
+
+		$term = get_term( $wc_parent_id, 'product_cat' );
+		if ( ! $term || is_wp_error( $term ) ) {
+			throw new RuntimeException(
+				sprintf(
+					__( 'La categoría WooCommerce %1$d vinculada al padre Dolibarr %2$d ya no existe.', 'dolisync' ),
+					$wc_parent_id,
+					$dolibarr_parent_id
+				)
+			);
+		}
+
+		return $wc_parent_id;
 	}
 
 	private function resolve_woocommerce_term_id_for_dolibarr_category( $dolibarr_category_id, $name, $parent_id = 0 ) {
