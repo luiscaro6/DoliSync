@@ -930,7 +930,35 @@ function dolisyncInitOrdersCatalog() {
 	jQuery(document).on('input', '#dolisync-orders-search', applySearch);
 	jQuery(document).on('change', '#dolisync-orders-status-filter', applySearch);
 	jQuery(document).on('click', '#dolisync-orders-pagination button', function () { page = Number(jQuery(this).data('page')) || 1; render(); });
-	jQuery(document).on('click', '.dolisync-orders-reload', function () { loadOrders(true); });
+	jQuery(document).on('click', '.dolisync-orders-reload', function () {
+		const $button = jQuery(this).prop('disabled', true).addClass('is-busy');
+		let offset = 0;
+		let updated = 0;
+		let errors = [];
+		const refreshBatch = function () {
+			jQuery.post(DoliSync.ajaxUrl, {action: 'dolisync_orders_refresh_all', nonce: DoliSync.nonce, offset: offset}).done(function (response) {
+				if (!response.success) {
+					jQuery('#dolisync-orders-notice').html('<div class="notice notice-error inline"><p>' + esc(response.data && response.data.message ? response.data.message : 'No se pudieron actualizar los pedidos.') + '</p></div>');
+					$button.prop('disabled', false).removeClass('is-busy');
+					return;
+				}
+				const data = response.data || {};
+				offset = Number(data.processed || offset);
+				updated += Number(data.updated || 0);
+				errors = errors.concat(data.errors || []);
+				jQuery('#dolisync-orders-notice').html('<div class="notice notice-info inline"><p>Consultando Dolibarr: ' + esc(offset) + ' de ' + esc(data.total || 0) + ' pedidos.</p></div>');
+				if (!data.done) { refreshBatch(); return; }
+				const errorText = errors.length ? ' Errores: ' + errors.map(esc).join(' · ') : '';
+				jQuery('#dolisync-orders-notice').html('<div class="notice ' + (errors.length ? 'notice-warning' : 'notice-success') + ' inline"><p>' + esc(updated) + ' pedidos actualizados desde Dolibarr.' + errorText + '</p></div>');
+				$button.prop('disabled', false).removeClass('is-busy');
+				loadOrders(false);
+			}).fail(function (xhr) {
+				jQuery('#dolisync-orders-notice').html('<div class="notice notice-error inline"><p>' + dolisyncAjaxError(xhr, 'No se pudieron actualizar los pedidos.') + '</p></div>');
+				$button.prop('disabled', false).removeClass('is-busy');
+			});
+		};
+		refreshBatch();
+	});
 	jQuery(document).on('change', '.dolisync-orders-select-all', function () {
 		const checked = this.checked;
 		filteredRows.forEach(function (row) { if (checked) { selectedOrders.add(Number(row.id)); } else { selectedOrders.delete(Number(row.id)); } });

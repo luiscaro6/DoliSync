@@ -363,7 +363,13 @@ class Dolisync_Invoice_PDF {
 		$args = array( $order->get_id() );
 		$timestamp = time() + self::EMAIL_RETRY_DELAY;
 		if ( ! wp_next_scheduled( 'dolisync_retry_invoice_email', $args ) ) {
-			wp_schedule_single_event( $timestamp, 'dolisync_retry_invoice_email', $args );
+			if ( function_exists( 'as_schedule_single_action' ) ) {
+				if ( ! function_exists( 'as_has_scheduled_action' ) || ! as_has_scheduled_action( 'dolisync_retry_invoice_email', $args, 'dolisync' ) ) {
+					as_schedule_single_action( $timestamp, 'dolisync_retry_invoice_email', $args, 'dolisync', true );
+				}
+			} else {
+				wp_schedule_single_event( $timestamp, 'dolisync_retry_invoice_email', $args );
+			}
 		}
 		self::update_relation( $order, array( 'invoice_email_status' => 'queued', 'invoice_email_next_retry_at' => wp_date( 'Y-m-d H:i:s', $timestamp, wp_timezone() ) ) );
 	}
@@ -400,7 +406,13 @@ class Dolisync_Invoice_PDF {
 		if ( $invoice_id > 0 && $retry_count < 3 && ! wp_next_scheduled( 'dolisync_retry_invoice_delivery', $args ) ) {
 			$order->update_meta_data( self::META_RETRY_COUNT, $retry_count + 1 );
 			$order->save_meta_data();
-			wp_schedule_single_event( time() + 60, 'dolisync_retry_invoice_delivery', $args );
+			if ( function_exists( 'as_schedule_single_action' ) ) {
+				if ( ! function_exists( 'as_has_scheduled_action' ) || ! as_has_scheduled_action( 'dolisync_retry_invoice_delivery', $args, 'dolisync' ) ) {
+					as_schedule_single_action( time() + 60, 'dolisync_retry_invoice_delivery', $args, 'dolisync', true );
+				}
+			} else {
+				wp_schedule_single_event( time() + 60, 'dolisync_retry_invoice_delivery', $args );
+			}
 		}
 	}
 

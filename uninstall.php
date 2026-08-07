@@ -16,6 +16,9 @@ foreach ( array( 'dolisync_logs_cache', 'dolisync_config_cache', 'dolisync_admin
 
 foreach ( array( 'dolisync_hourly_sync', 'dolisync_cleanup_logs', 'dolisync_connection_autocheck', 'dolisync_product_autosync', 'dolisync_stock_autosync', 'dolisync_stock_autosync_batch', 'dolisync_retry_invoice_delivery', 'dolisync_retry_invoice_email', 'dolisync_process_order_queue' ) as $hook ) {
 	wp_clear_scheduled_hook( $hook );
+	if ( function_exists( 'as_unschedule_all_actions' ) ) {
+		as_unschedule_all_actions( $hook, array(), 'dolisync' );
+	}
 }
 
 $config_table = $wpdb->prefix . 'dolisync_config';

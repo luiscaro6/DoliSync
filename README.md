@@ -48,7 +48,8 @@ sobrescribe las existencias de Dolibarr.
 
 ### Clientes, pedidos y facturas
 
-- Sincroniza el pedido cuando se crea en WooCommerce.
+- Sincroniza el pedido cuando entra en `on-hold`, `processing` o `completed`; los
+  pedidos pendientes o fallidos no se facturan.
 - Localiza o crea el tercero en Dolibarr con sus datos fiscales y postales.
 - Valida DNI, NIE, CIF y pasaportes antes de asignarlos al tercero.
 - Crea directamente una factura de cliente, sin un pedido comercial intermedio.
@@ -56,6 +57,8 @@ sobrescribe las existencias de Dolibarr.
 - Valida la factura en Dolibarr y admite los tiempos de respuesta de VeriFactu.
 - Marca la factura como pagada cuando el pedido pasa a `processing` o
   `completed`.
+- Al actualizar desde Dolibarr, mueve un pedido `on-hold` a `processing` si la
+  factura remota figura como pagada.
 - Descarga el PDF fiscal, lo guarda de forma privada y lo adjunta al correo de
   WooCommerce.
 - Programa nuevos intentos cuando el documento todavía no está disponible.
@@ -92,8 +95,8 @@ independientes aunque compartan cliente e importe.
 
 ## Flujo de una compra
 
-1. WooCommerce crea el pedido y DoliSync reserva una identidad externa basada en
-   su ID.
+1. WooCommerce crea el pedido y, cuando alcanza un estado facturable, DoliSync
+   reserva una identidad externa basada en su ID.
 2. DoliSync localiza o crea el tercero en Dolibarr.
 3. Traduce las líneas usando las relaciones de producto y el mapeo de impuestos.
 4. Crea una factura con una referencia externa exclusiva del pedido.
@@ -170,9 +173,10 @@ comprobación previa a producción.
 
 ### Automatización del stock
 
-La frecuencia se selecciona desde DoliSync. Como WP-Cron depende del tráfico,
-puedes invocarlo desde el programador del servidor para obtener una ejecución
-predecible:
+La frecuencia se selecciona desde DoliSync. Las colas y reintentos de pedidos
+usan Action Scheduler cuando WooCommerce lo ofrece y conservan WP-Cron como
+respaldo. Como las tareas recurrentes dependen del ejecutor de WordPress, puedes
+invocarlo desde el programador del servidor para obtener una ejecución predecible:
 
 ```cron
 */5 * * * * curl -fsS "https://tienda.example.com/wp-cron.php?doing_wp_cron" >/dev/null 2>&1

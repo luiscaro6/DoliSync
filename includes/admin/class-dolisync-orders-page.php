@@ -14,6 +14,7 @@ class Dolisync_Orders_Page {
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/database/class-dolisync-schema.php';
 		Dolisync_Schema::ensure_ignored_items_table();
 		add_action( 'wp_ajax_dolisync_orders_catalog', array( __CLASS__, 'ajax_catalog' ) );
+		add_action( 'wp_ajax_dolisync_orders_refresh_all', array( __CLASS__, 'ajax_refresh_all' ) );
 		add_action( 'wp_ajax_dolisync_order_action', array( __CLASS__, 'ajax_order_action' ) );
 		add_action( 'wp_ajax_dolisync_order_queue_progress', array( __CLASS__, 'ajax_queue_progress' ) );
 		add_action( 'wp_ajax_dolisync_order_download_pdf', array( __CLASS__, 'ajax_download_pdf' ) );
@@ -31,7 +32,7 @@ class Dolisync_Orders_Page {
 					<h1><?php echo esc_html__( 'Pedidos', 'dolisync' ); ?></h1>
 					<p><?php echo esc_html__( 'Comprueba la sincronización con Dolibarr, el PDF local y el envío de la factura al cliente.', 'dolisync' ); ?></p>
 				</div>
-				<button type="button" class="button dolisync-orders-reload"><span class="dashicons dashicons-update"></span> <?php echo esc_html__( 'Actualizar pedidos', 'dolisync' ); ?></button>
+				<button type="button" class="button dolisync-orders-reload"><span class="dashicons dashicons-update"></span> <?php echo esc_html__( 'Actualizar desde Dolibarr', 'dolisync' ); ?></button>
 			</div>
 			<div class="dolisync-products-toolbar">
 				<label class="dolisync-products-search">
@@ -87,6 +88,40 @@ class Dolisync_Orders_Page {
 		}
 	}
 
+	public static function ajax_refresh_all() {
+		self::guard_ajax();
+		global $wpdb;
+		$offset = isset( $_POST['offset'] ) ? max( 0, absint( wp_unslash( $_POST['offset'] ) ) ) : 0;
+		$limit = 10;
+		$table = $wpdb->prefix . 'dolisync_order_relations';
+		$total = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$table} WHERE dolibarr_invoice_id IS NOT NULL AND dolibarr_invoice_id > 0" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		$rows = $wpdb->get_results( $wpdb->prepare( "SELECT wc_order_id, dolibarr_invoice_id FROM {$table} WHERE dolibarr_invoice_id IS NOT NULL AND dolibarr_invoice_id > 0 ORDER BY wc_order_id ASC LIMIT %d OFFSET %d", $limit, $offset ), ARRAY_A ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		require_once DOLISYNC_PLUGIN_DIR . 'includes/api/class-dolisync-api-client.php';
+		require_once DOLISYNC_PLUGIN_DIR . 'includes/database/class-dolisync-ignored-items.php';
+		$api = new Dolisync_API_Client();
+		$updated = 0;
+		$errors = array();
+		foreach ( $rows as $row ) {
+			$order_id = (int) $row['wc_order_id'];
+			if ( Dolisync_Ignored_Items::is_ignored( 'order', $order_id, 0 ) ) {
+				continue;
+			}
+			$order = function_exists( 'wc_get_order' ) ? wc_get_order( $order_id ) : null;
+			if ( ! $order instanceof WC_Order ) {
+				$errors[] = sprintf( __( 'Pedido #%d no encontrado.', 'dolisync' ), $order_id );
+				continue;
+			}
+			try {
+				self::refresh_from_dolibarr( $order, (int) $row['dolibarr_invoice_id'], $api, false );
+				$updated++;
+			} catch ( Throwable $e ) {
+				$errors[] = sprintf( '#%1$d: %2$s', $order_id, $e->getMessage() );
+			}
+		}
+		$next_offset = $offset + count( $rows );
+		wp_send_json_success( array( 'processed' => $next_offset, 'total' => $total, 'updated' => $updated, 'errors' => $errors, 'done' => $next_offset >= $total || empty( $rows ) ) );
+	}
+
 	public static function ajax_order_action() {
 		self::guard_ajax();
 		$order_id = isset( $_POST['order_id'] ) ? absint( wp_unslash( $_POST['order_id'] ) ) : 0;
@@ -134,21 +169,11 @@ class Dolisync_Orders_Page {
 					throw new RuntimeException( __( 'El pedido no tiene una factura Dolibarr vinculada.', 'dolisync' ) );
 				}
 				require_once DOLISYNC_PLUGIN_DIR . 'includes/api/class-dolisync-api-client.php';
-				$api = new Dolisync_API_Client();
-				$response = $api->get( '/invoices/' . $invoice_id );
-				if ( empty( $response['success'] ) ) {
-					throw new RuntimeException( (string) ( $response['message'] ?? __( 'No se pudo consultar la factura en Dolibarr.', 'dolisync' ) ) );
-				}
-				$invoice = self::normalize_array( $response['data'] ?? array() );
-				$status = ! empty( $invoice['paye'] ) ? 'paid' : ( (int) ( $invoice['statut'] ?? $invoice['status'] ?? 0 ) > 0 ? 'validated' : 'draft' );
-				self::update_relation( $order_id, array( 'invoice_status' => $status, 'invoice_ref' => (string) ( $invoice['ref'] ?? '' ), 'last_error_message' => '', 'synced_at' => current_time( 'mysql' ) ) );
-				if ( '' === Dolisync_Invoice_PDF::generate_and_store( $order, $api, $invoice_id ) ) {
-					throw new RuntimeException( __( 'La factura se actualizó, pero no se pudo descargar su PDF.', 'dolisync' ) );
-				}
-				if ( in_array( $status, array( 'validated', 'paid' ), true ) ) {
-					self::update_relation( $order_id, array( 'sync_status' => 'success', 'last_error_message' => '' ) );
-				}
-				wp_send_json_success( array( 'message' => __( 'Factura y PDF actualizados desde Dolibarr.', 'dolisync' ) ) );
+				$order_moved_to_processing = self::refresh_from_dolibarr( $order, $invoice_id, new Dolisync_API_Client(), true );
+				$message = $order_moved_to_processing
+					? __( 'Factura y PDF actualizados desde Dolibarr. El pedido ha pasado a Procesando porque la factura está pagada.', 'dolisync' )
+					: __( 'Factura y PDF actualizados desde Dolibarr.', 'dolisync' );
+				wp_send_json_success( array( 'message' => $message ) );
 			}
 
 			if ( 'resend_email' === $operation ) {
@@ -355,6 +380,31 @@ class Dolisync_Orders_Page {
 			'name'  => '' !== $current_name ? $current_name : $name,
 			'email' => $email,
 		);
+	}
+
+	private static function refresh_from_dolibarr( WC_Order $order, $invoice_id, Dolisync_API_Client $api, $refresh_pdf ) {
+		$response = $api->get( '/invoices/' . (int) $invoice_id );
+		if ( empty( $response['success'] ) ) {
+			throw new RuntimeException( (string) ( $response['message'] ?? __( 'No se pudo consultar la factura en Dolibarr.', 'dolisync' ) ) );
+		}
+		$invoice = self::normalize_array( $response['data'] ?? array() );
+		$status = ! empty( $invoice['paye'] ) ? 'paid' : ( (int) ( $invoice['statut'] ?? $invoice['status'] ?? 0 ) > 0 ? 'validated' : 'draft' );
+		self::update_relation( $order->get_id(), array( 'invoice_status' => $status, 'invoice_ref' => (string) ( $invoice['ref'] ?? '' ), 'last_error_message' => '', 'synced_at' => current_time( 'mysql' ) ) );
+		$moved_to_processing = false;
+		if ( 'paid' === $status && $order->has_status( 'on-hold' ) ) {
+			$order->update_status( 'processing', __( 'Pedido actualizado a Procesando porque la factura vinculada figura como pagada en Dolibarr.', 'dolisync' ) );
+			$moved_to_processing = true;
+		}
+		if ( $refresh_pdf ) {
+			require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/orders/class-dolisync-invoice-pdf.php';
+			if ( '' === Dolisync_Invoice_PDF::generate_and_store( $order, $api, (int) $invoice_id ) ) {
+				throw new RuntimeException( __( 'La factura se actualizó, pero no se pudo descargar su PDF.', 'dolisync' ) );
+			}
+		}
+		if ( in_array( $status, array( 'validated', 'paid' ), true ) ) {
+			self::update_relation( $order->get_id(), array( 'sync_status' => 'success', 'last_error_message' => '' ) );
+		}
+		return $moved_to_processing;
 	}
 
 	private static function guard_ajax() {

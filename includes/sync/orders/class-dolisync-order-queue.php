@@ -49,6 +49,9 @@ class Dolisync_Order_Queue {
 		if ( $timestamp ) {
 			wp_unschedule_event( $timestamp, self::HOOK, array( $order_id ) );
 		}
+		if ( function_exists( 'as_unschedule_all_actions' ) ) {
+			as_unschedule_all_actions( self::HOOK, array( $order_id ), 'dolisync' );
+		}
 		self::process( $order_id, true );
 		global $wpdb;
 		$row = $wpdb->get_row( $wpdb->prepare( "SELECT sync_status, last_error_message FROM {$wpdb->prefix}dolisync_order_relations WHERE wc_order_id = %d", $order_id ), ARRAY_A ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
@@ -183,6 +186,13 @@ class Dolisync_Order_Queue {
 
 	private static function schedule( $order_id, $timestamp ) {
 		$args = array( (int) $order_id );
+		if ( function_exists( 'as_schedule_single_action' ) ) {
+			if ( ! function_exists( 'as_has_scheduled_action' ) || ! as_has_scheduled_action( self::HOOK, $args, 'dolisync' ) ) {
+				$action_id = as_schedule_single_action( $timestamp, self::HOOK, $args, 'dolisync', true );
+				return is_numeric( $action_id ) && (int) $action_id > 0;
+			}
+			return true;
+		}
 		if ( ! wp_next_scheduled( self::HOOK, $args ) ) {
 			$result = wp_schedule_single_event( $timestamp, self::HOOK, $args, true );
 			return ! is_wp_error( $result ) && false !== $result;

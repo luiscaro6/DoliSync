@@ -26,6 +26,11 @@ class Dolisync_Deactivator {
 			wp_clear_scheduled_hook( 'dolisync_retry_invoice_email' );
 			wp_clear_scheduled_hook( 'dolisync_process_order_queue' );
 		}
+		if ( function_exists( 'as_unschedule_all_actions' ) ) {
+			foreach ( array( 'dolisync_retry_invoice_delivery', 'dolisync_retry_invoice_email', 'dolisync_process_order_queue' ) as $hook ) {
+				as_unschedule_all_actions( $hook, array(), 'dolisync' );
+			}
+		}
 	}
 
 	private static function clear_transients() {

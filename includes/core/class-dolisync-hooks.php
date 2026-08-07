@@ -12,6 +12,7 @@ class Dolisync_Hooks {
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/orders/class-dolisync-invoice-pdf.php';
 		Dolisync_Invoice_PDF::init();
 		add_action( 'delete_user', array( __CLASS__, 'on_wp_user_deleted' ), 10, 1 );
+		add_action( 'woocommerce_created_customer', array( __CLASS__, 'on_wp_user_registered' ), 30, 1 );
 		add_action( 'woocommerce_checkout_order_processed', array( __CLASS__, 'on_woocommerce_order_created' ), 20, 3 );
 		add_action( 'woocommerce_store_api_checkout_order_processed', array( __CLASS__, 'on_store_api_order_created' ), 20, 1 );
 		add_action( 'woocommerce_order_status_changed', array( __CLASS__, 'on_order_status_changed' ), 15, 4 );
@@ -24,9 +25,20 @@ class Dolisync_Hooks {
 	}
 
 	public static function on_order_status_changed( $order_id, $from_status, $to_status, $order ) {
-		if ( in_array( (string) $to_status, array( 'processing', 'on-hold', 'completed' ), true ) ) {
-			self::on_woocommerce_order_created( $order_id, null, $order );
+		if ( in_array( (string) $to_status, array( 'processing', 'completed' ), true ) ) {
+			require_once DOLISYNC_PLUGIN_DIR . 'includes/database/class-dolisync-ignored-items.php';
+			if ( ! Dolisync_Ignored_Items::is_ignored( 'order', (int) $order_id, 0 ) ) {
+				try {
+					require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/orders/class-dolisync-order-sync.php';
+					Dolisync_Order_Sync::sync_invoice_payment_status( (int) $order_id, (string) $to_status );
+				} catch ( Throwable $e ) {
+					require_once DOLISYNC_PLUGIN_DIR . 'includes/core/class-dolisync-action-logger.php';
+					Dolisync_Action_Logger::log_action( 'factura', 'sincronización_pago', 'error', sprintf( __( 'El pedido WooCommerce %1$d pasó a %2$s, pero no se pudo sincronizar el pago en Dolibarr: %3$s', 'dolisync' ), (int) $order_id, (string) $to_status, $e->getMessage() ), get_current_user_id() );
+				}
+			}
 		}
+
+		self::maybe_enqueue_order( $order_id, $order );
 	}
 
 	public static function on_wp_user_registered( $user_id ) {
@@ -43,6 +55,18 @@ class Dolisync_Hooks {
 
 	public static function on_woocommerce_order_created( $order_id, $posted_data = null, $order = null ) {
 		if ( ! class_exists( 'WooCommerce' ) ) {
+			return;
+		}
+		$order = $order instanceof WC_Order ? $order : ( function_exists( 'wc_get_order' ) ? wc_get_order( (int) $order_id ) : null );
+		if ( $order instanceof WC_Order && (int) $order->get_user_id() > 0 ) {
+			self::on_wp_user_registered( (int) $order->get_user_id() );
+		}
+		self::maybe_enqueue_order( $order_id, $order );
+	}
+
+	private static function maybe_enqueue_order( $order_id, $order = null ) {
+		$order = $order instanceof WC_Order ? $order : ( function_exists( 'wc_get_order' ) ? wc_get_order( (int) $order_id ) : null );
+		if ( ! $order instanceof WC_Order || ! in_array( (string) $order->get_status(), array( 'on-hold', 'processing', 'completed' ), true ) ) {
 			return;
 		}
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/database/class-dolisync-ignored-items.php';
