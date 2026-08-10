@@ -194,17 +194,6 @@ class Dolisync_Product_Sync_Reverse {
 			}
 
 			$payload_hash = $this->payload_hash( $payload );
-			if ( $existing_relation && $dolibarr_id > 0 && hash_equals( (string) get_post_meta( $wc_product_id, '_dolisync_last_export_hash', true ), $payload_hash ) ) {
-				$variation_changed = $is_variable_product
-					? $this->sync_dolibarr_variations( $dolibarr_id, $wc_product_id, $payload )
-					: false;
-				$this->set_dolibarr_sale_status( $dolibarr_id );
-				$image_changed = $this->image_sync->sync_woocommerce_to_dolibarr( $wc_product_id, $dolibarr_id, '' );
-				$action = $image_changed || $variation_changed ? 'updated' : 'skipped';
-				$this->stats[ $action ]++;
-				$this->stats['details'][] = array( 'action' => $action, 'dolibarr_product_id' => $dolibarr_id, 'wc_product_id' => $wc_product_id );
-				return;
-			}
 
 			if ( ! $dolibarr_id ) {
 				$response = $this->api_client->post( '/products', $this->build_dolibarr_payload( $payload, true ) );
@@ -232,7 +221,7 @@ class Dolisync_Product_Sync_Reverse {
 			if ( $is_variable_product ) {
 				$this->sync_dolibarr_variations( $dolibarr_id, $wc_product_id, $payload );
 			}
-			$this->set_dolibarr_sale_status( $dolibarr_id );
+			$this->set_dolibarr_sale_status( $dolibarr_id, $payload['active'] );
 
 			$this->upsert_relation( $dolibarr_id, $wc_product_id, $payload, $existing_relation );
 			update_post_meta( $wc_product_id, '_dolisync_last_export_hash', $payload_hash );
@@ -290,9 +279,10 @@ class Dolisync_Product_Sync_Reverse {
 			'width' => $this->convert_wc_dimension_to_meters( $wc_product->get_width() ),
 			'height' => $this->convert_wc_dimension_to_meters( $wc_product->get_height() ),
 			'url' => method_exists( $wc_product, 'get_product_url' ) ? (string) $wc_product->get_product_url() : '',
-			// Todo el catálogo exportado debe quedar disponible para la venta en
-			// Dolibarr, independientemente del estado o visibilidad que tenga en Woo.
-			'active' => 1,
+			// Solo los productos publicados y visibles quedan a la venta en Dolibarr.
+			// Los demás se sincronizan igualmente, pero con el estado comercial inactivo.
+			'active' => 'publish' === (string) $wc_product->get_status()
+				&& ( ! method_exists( $wc_product, 'get_catalog_visibility' ) || 'hidden' !== (string) $wc_product->get_catalog_visibility() ),
 			'categories' => $category_map,
 			'category_names' => $category_names,
 				'variations' => $this->normalize_wc_variations( $wc_product ),
@@ -668,12 +658,12 @@ class Dolisync_Product_Sync_Reverse {
 		}
 	}
 
-	private function set_dolibarr_sale_status( $dolibarr_id ) {
+	private function set_dolibarr_sale_status( $dolibarr_id, $active ) {
 		$response = $this->api_client->put(
 			'/products/' . (int) $dolibarr_id,
 			array(
-				// DoliSync mantiene todos los productos sincronizados a la venta.
-				'status' => 1,
+				// Dolibarr usa 1 para "en venta" y 0 para "fuera de venta".
+				'status' => $active ? 1 : 0,
 				'caller' => 'dolisync',
 			)
 		);
@@ -810,7 +800,7 @@ class Dolisync_Product_Sync_Reverse {
 				}
 				$stock_changed = $this->sync_dolibarr_variation_stock( $child_id, $variation['stock_qty'] ?? null, $price, $wc_variation_id ) || $stock_changed;
 				$this->image_sync->sync_woocommerce_to_dolibarr( $wc_variation_id, $child_id, '' );
-				$this->set_dolibarr_sale_status( $child_id );
+				$this->set_dolibarr_sale_status( $child_id, $payload['active'] );
 			}
 
 			$this->save_variation_relation( $dolibarr_id, $wc_product_id, $child_id, $combination_id, $variation );

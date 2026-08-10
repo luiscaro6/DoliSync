@@ -71,6 +71,11 @@ class Dolisync_Logger {
 			$insert_data['cron_interval'] = (string) $cron_interval;
 		}
 
+		if ( in_array( 'correlation_id', $columns, true ) ) {
+			require_once DOLISYNC_PLUGIN_DIR . 'includes/core/class-dolisync-operation-context.php';
+			$insert_data['correlation_id'] = Dolisync_Operation_Context::ensure( 'api' );
+		}
+
 		$inserted = $wpdb->insert( $table, $insert_data ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 
 		if ( false !== $inserted ) {
@@ -133,10 +138,6 @@ class Dolisync_Logger {
 		if ( ! $this->table_exists( $stats_table ) ) {
 			require_once DOLISYNC_PLUGIN_DIR . 'includes/database/class-dolisync-schema.php';
 			Dolisync_Schema::ensure_error_stats_table();
-		}
-		if ( in_array( 'correlation_id', $columns, true ) ) {
-			require_once DOLISYNC_PLUGIN_DIR . 'includes/core/class-dolisync-operation-context.php';
-			$insert_data['correlation_id'] = Dolisync_Operation_Context::ensure( 'api' );
 		}
 
 		$total = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$logs_table} WHERE log_level = 'ERROR'" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery

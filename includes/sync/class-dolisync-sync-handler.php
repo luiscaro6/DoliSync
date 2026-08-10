@@ -147,7 +147,8 @@ class Dolisync_Sync_Handler {
 			require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/products/class-dolisync-product-sync.php';
 			$sync = new Dolisync_Product_Sync();
 			$per_page = isset( $_POST['per_page'] ) ? max( 1, min( 100, absint( wp_unslash( $_POST['per_page'] ) ) ) ) : 25;
-			$result = $sync->sync( $page, $per_page );
+			$sync_categories = ! isset( $_POST['sync_categories'] ) || rest_sanitize_boolean( wp_unslash( $_POST['sync_categories'] ) );
+			$result = $sync->sync( $page, $per_page, $sync_categories );
 
 			if ( ! empty( $result['success'] ) ) {
 				if ( empty( $result['pagination']['has_more'] ) ) {

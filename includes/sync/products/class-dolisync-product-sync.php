@@ -10,7 +10,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 class Dolisync_Product_Sync {
 	private const DEFAULT_PAGE_SIZE = 25;
 	private const MAX_PAGE_SIZE = 100;
-	private const PAYLOAD_VERSION = 2;
+	private const PAYLOAD_VERSION = 3;
 
 	private $api_client = null;
 	private $db_manager = null;
@@ -42,7 +42,7 @@ class Dolisync_Product_Sync {
 		Dolisync_Schema::ensure_product_variation_relation_columns();
 	}
 
-	public function sync( $page = 0, $per_page = self::DEFAULT_PAGE_SIZE ) {
+	public function sync( $page = 0, $per_page = self::DEFAULT_PAGE_SIZE, $sync_categories = true ) {
 		$this->reset_stats();
 		$page = max( 0, (int) $page );
 		$per_page = max( 1, min( self::MAX_PAGE_SIZE, (int) $per_page ) );
@@ -57,7 +57,7 @@ class Dolisync_Product_Sync {
 			);
 		}
 
-		if ( 0 === $page ) {
+		if ( 0 === $page && $sync_categories ) {
 			$category_mapping_stats = $this->sync_category_mappings_bidirectional();
 			$this->stats['details'][] = array( 'category_sync' => $category_mapping_stats );
 		}
@@ -833,7 +833,10 @@ class Dolisync_Product_Sync {
 			}
 
 			$payload_hash = $this->payload_hash( $payload );
-			if ( $existing_relation && $wc_product_id > 0 && hash_equals( (string) get_post_meta( $wc_product_id, '_dolisync_last_import_hash', true ), $payload_hash ) ) {
+			// Los productos variables se vuelven a reconciliar aunque Dolibarr no haya
+			// cambiado. El hash solo describe el origen y no permite detectar una
+			// variación de WooCommerce sin atributos o modificada manualmente.
+			if ( ! $is_variable_product && $existing_relation && $wc_product_id > 0 && hash_equals( (string) get_post_meta( $wc_product_id, '_dolisync_last_import_hash', true ), $payload_hash ) ) {
 				$image_changed = $this->image_sync->sync_dolibarr_to_woocommerce( $dolibarr_product_id, $wc_product_id, $payload['sku'] );
 				$action = $image_changed ? 'updated' : 'skipped';
 				$this->stats[ $action ]++;
@@ -1177,16 +1180,28 @@ class Dolisync_Product_Sync {
 		}
 
 		$attributes = array();
+		$position = 0;
 		foreach ( $attribute_values as $attribute_key => $values ) {
 			$attribute = new WC_Product_Attribute();
-			$attribute->set_name( ucwords( str_replace( '_', ' ', $attribute_key ) ) );
+			$attribute->set_id( 0 );
+			$attribute->set_name( $this->wc_attribute_name( $attribute_key ) );
 			$attribute->set_options( array_values( array_unique( array_filter( $values ) ) ) );
+			$attribute->set_position( $position++ );
 			$attribute->set_visible( true );
 			$attribute->set_variation( true );
 			$attributes[] = $attribute;
 		}
 
 		return $attributes;
+	}
+
+	/**
+	 * Devuelve el mismo nombre canónico que WooCommerce convertirá en la clave
+	 * del atributo del producto padre.
+	 */
+	private function wc_attribute_name( $attribute_key ) {
+		$attribute_key = sanitize_title( (string) $attribute_key );
+		return ucwords( str_replace( array( '-', '_' ), ' ', $attribute_key ) );
 	}
 
 	private function sync_variations_to_woo( $dolibarr_product_id, $wc_product_id, $variations ) {
@@ -1222,7 +1237,10 @@ class Dolisync_Product_Sync {
 
 			$variation_attributes = array();
 			foreach ( (array) $variation['attributes'] as $attribute_key => $attribute_value ) {
-				$variation_attributes[ 'attribute_' . sanitize_title( $attribute_key ) ] = $attribute_value;
+				// WC_Product_Variation guarda internamente las claves sin el prefijo
+				// "attribute_". Usar aquí la clave canónica del padre evita que la
+				// variación quede huérfana y se muestre solo con el nombre del producto.
+				$variation_attributes[ sanitize_title( $this->wc_attribute_name( $attribute_key ) ) ] = sanitize_text_field( (string) $attribute_value );
 			}
 			$variation_product->set_attributes( $variation_attributes );
 			$variation_id = $variation_product->save();
@@ -1267,6 +1285,15 @@ class Dolisync_Product_Sync {
 				wp_delete_post( (int) $existing_variation_id, true );
 				$wpdb->delete( $table, array( 'wc_variation_id' => (int) $existing_variation_id ), array( '%d' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 			}
+		}
+
+		// Regenera precios, atributos disponibles, hijos y cachés del producto
+		// variable después de crear, actualizar o eliminar sus variaciones.
+		if ( class_exists( 'WC_Product_Variable' ) && method_exists( 'WC_Product_Variable', 'sync' ) ) {
+			WC_Product_Variable::sync( $wc_product_id );
+		}
+		if ( function_exists( 'wc_delete_product_transients' ) ) {
+			wc_delete_product_transients( $wc_product_id );
 		}
 	}
 
