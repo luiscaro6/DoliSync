@@ -25,8 +25,12 @@ class Dolisync_Event_Sender {
 			return;
 		}
 
-		$first_name = (string) ( get_user_meta( $user_id, 'first_name', true ) ?: $user->display_name );
-		$last_name = (string) ( get_user_meta( $user_id, 'last_name', true ) ?: '' );
+		$first_name = (string) ( get_user_meta( $user_id, 'billing_first_name', true ) ?: get_user_meta( $user_id, 'first_name', true ) );
+		$last_name = (string) ( get_user_meta( $user_id, 'billing_last_name', true ) ?: get_user_meta( $user_id, 'last_name', true ) );
+		$full_name = trim( $first_name . ' ' . $last_name );
+		if ( '' === $full_name ) {
+			$full_name = (string) $user->display_name;
+		}
 		$email = sanitize_email( (string) $user->user_email );
 		$dni = Dolisync_Contact_Identity_Resolver::normalize_document( get_user_meta( $user_id, 'dolisync_document_id', true ) );
 		if ( '' === $dni ) {
@@ -50,8 +54,20 @@ class Dolisync_Event_Sender {
 		$response = $api->post(
 			'/thirdparties',
 			array(
-				'firstname' => sanitize_text_field( $first_name ), 'name' => sanitize_text_field( $last_name ?: $first_name ),
-				'email' => $email, 'idprof1' => sanitize_text_field( $dni ), 'type' => 2, 'client' => 1, 'status' => 1,
+				'name'         => sanitize_text_field( $full_name ),
+				'email'        => $email,
+				'phone'        => sanitize_text_field( (string) get_user_meta( $user_id, 'billing_phone', true ) ),
+				'address'      => implode( "\n", array_filter( array(
+					sanitize_text_field( (string) get_user_meta( $user_id, 'billing_address_1', true ) ),
+					sanitize_text_field( (string) get_user_meta( $user_id, 'billing_address_2', true ) ),
+				) ) ),
+				'zip'          => sanitize_text_field( (string) get_user_meta( $user_id, 'billing_postcode', true ) ),
+				'town'         => sanitize_text_field( (string) get_user_meta( $user_id, 'billing_city', true ) ),
+				'country_code' => strtoupper( sanitize_text_field( (string) get_user_meta( $user_id, 'billing_country', true ) ) ),
+				'idprof1'      => sanitize_text_field( $dni ),
+				'type'         => 2,
+				'client'       => 1,
+				'status'       => 1,
 			)
 		);
 		if ( empty( $response['success'] ) ) {

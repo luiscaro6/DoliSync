@@ -42,7 +42,7 @@ class Dolisync_Product_Sync {
 		Dolisync_Schema::ensure_product_variation_relation_columns();
 	}
 
-	public function sync( $page = 0, $per_page = self::DEFAULT_PAGE_SIZE, $sync_categories = true ) {
+	public function sync( $page = 0, $per_page = self::DEFAULT_PAGE_SIZE ) {
 		$this->reset_stats();
 		$page = max( 0, (int) $page );
 		$per_page = max( 1, min( self::MAX_PAGE_SIZE, (int) $per_page ) );
@@ -55,11 +55,6 @@ class Dolisync_Product_Sync {
 				'message' => $message,
 				'stats'   => $this->stats,
 			);
-		}
-
-		if ( 0 === $page && $sync_categories ) {
-			$category_mapping_stats = $this->sync_category_mappings_bidirectional();
-			$this->stats['details'][] = array( 'category_sync' => $category_mapping_stats );
 		}
 
 		$product_page = $this->fetch_dolibarr_products_page( $page, $per_page );
@@ -147,8 +142,11 @@ class Dolisync_Product_Sync {
 		);
 	}
 
-	public function sync_categories() {
+	public function sync_categories( $direction = 'bidirectional' ) {
 		$this->reset_stats();
+		if ( ! in_array( $direction, array( 'bidirectional', 'dolibarr_to_woocommerce', 'woocommerce_to_dolibarr' ), true ) ) {
+			throw new InvalidArgumentException( __( 'Dirección de categorías no válida.', 'dolisync' ) );
+		}
 
 		if ( ! class_exists( 'WooCommerce' ) ) {
 			$message = __( 'WooCommerce no está activo.', 'dolisync' );
@@ -160,7 +158,7 @@ class Dolisync_Product_Sync {
 			);
 		}
 
-		$mapping_stats = $this->sync_category_mappings_bidirectional();
+		$mapping_stats = $this->sync_category_mappings_bidirectional( $direction );
 		$this->stats['created'] = (int) ( $mapping_stats['created'] ?? 0 );
 		$this->stats['updated'] = (int) ( $mapping_stats['updated'] ?? 0 );
 		$this->stats['skipped'] = (int) ( $mapping_stats['skipped'] ?? 0 );
@@ -183,7 +181,7 @@ class Dolisync_Product_Sync {
 		);
 	}
 
-	private function sync_category_mappings_bidirectional() {
+	private function sync_category_mappings_bidirectional( $direction = 'bidirectional' ) {
 		global $wpdb;
 
 		$table = $wpdb->prefix . 'dolisync_product_category_mappings';
@@ -197,6 +195,14 @@ class Dolisync_Product_Sync {
 
 		$dolibarr_categories = $this->sort_categories_by_parent_depth( $this->fetch_dolibarr_product_categories() );
 		$woocommerce_categories = $this->sort_categories_by_parent_depth( $this->fetch_woocommerce_product_categories() );
+		$dolibarr_by_id = array();
+		foreach ( $dolibarr_categories as $category ) {
+			$dolibarr_by_id[ (int) ( $category['id'] ?? 0 ) ] = $category;
+		}
+		$woocommerce_by_id = array();
+		foreach ( $woocommerce_categories as $category ) {
+			$woocommerce_by_id[ (int) ( $category['id'] ?? 0 ) ] = $category;
+		}
 		$existing_rows = $wpdb->get_results( "SELECT * FROM {$table}", ARRAY_A ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 		$dolibarr_to_wc_map = array();
 		$wc_to_dolibarr_map = array();
@@ -208,20 +214,38 @@ class Dolisync_Product_Sync {
 			$dolibarr_id = (int) ( $row['dolibarr_category_id'] ?? 0 );
 			$wc_id = (int) ( $row['wc_category_id'] ?? 0 );
 			if ( $dolibarr_id > 0 && $wc_id > 0 ) {
+				// No reutilizar relaciones cuyo objeto ya no existe en alguna plataforma.
+				// De lo contrario se intentaría actualizar un ID Dolibarr obsoleto (404)
+				// o un término WooCommerce eliminado.
+				if ( ! isset( $dolibarr_by_id[ $dolibarr_id ], $woocommerce_by_id[ $wc_id ] ) ) {
+					$wpdb->delete( $table, array( 'id' => (int) ( $row['id'] ?? 0 ) ), array( '%d' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+					continue;
+				}
+				$dolibarr_slug = $this->normalize_category_slug( $dolibarr_by_id[ $dolibarr_id ]['slug'] ?? '' );
+				$wc_slug = $this->normalize_category_slug( $woocommerce_by_id[ $wc_id ]['slug'] ?? '' );
+				if ( '' !== $dolibarr_slug && '' !== $wc_slug && $dolibarr_slug !== $wc_slug ) {
+					$wpdb->delete( $table, array( 'id' => (int) ( $row['id'] ?? 0 ) ), array( '%d' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+					continue;
+				}
 				$dolibarr_to_wc_map[ $dolibarr_id ] = $wc_id;
 				$wc_to_dolibarr_map[ $wc_id ] = $dolibarr_id;
 			}
 		}
 
-		$dolibarr_root_id = $this->ensure_dolibarr_products_root_category();
-		if ( $dolibarr_root_id <= 0 ) {
+		$export_to_dolibarr = in_array( $direction, array( 'bidirectional', 'woocommerce_to_dolibarr' ), true );
+		$import_to_woocommerce = in_array( $direction, array( 'bidirectional', 'dolibarr_to_woocommerce' ), true );
+		$dolibarr_root_id = $export_to_dolibarr ? $this->ensure_dolibarr_products_root_category() : 0;
+		if ( $export_to_dolibarr && $dolibarr_root_id <= 0 ) {
 			$stats['errors']++;
 			return $stats;
 		}
 
-		$dolibarr_by_name = array();
+		$dolibarr_by_slug = array();
 		foreach ( $dolibarr_categories as $category ) {
-			$dolibarr_by_name[ $this->normalize_category_name( $category['name'] ?? '' ) ] = $category;
+			$slug = $this->normalize_category_slug( $category['slug'] ?? '' );
+			if ( '' !== $slug ) {
+				$dolibarr_by_slug[ $slug ] = $category;
+			}
 		}
 
 		$used_woocommerce_ids = array();
@@ -233,8 +257,10 @@ class Dolisync_Product_Sync {
 		}
 
 		foreach ( $woocommerce_categories as $wc_category ) {
+			if ( ! $export_to_dolibarr ) { continue; }
 			$wc_category_id = (int) ( $wc_category['id'] ?? 0 );
 			$wc_name = sanitize_text_field( (string) ( $wc_category['name'] ?? '' ) );
+			$wc_slug = $this->normalize_category_slug( $wc_category['slug'] ?? '' );
 			$wc_parent_id = (int) ( $wc_category['parent_id'] ?? 0 );
 			if ( $wc_category_id <= 0 || '' === $wc_name ) {
 				$stats['skipped']++;
@@ -244,20 +270,22 @@ class Dolisync_Product_Sync {
 			$dolibarr_category_id = (int) ( $wc_to_dolibarr_map[ $wc_category_id ] ?? 0 );
 			$mapped_parent_id = ( $wc_parent_id > 0 && isset( $wc_to_dolibarr_map[ $wc_parent_id ] ) ) ? (int) $wc_to_dolibarr_map[ $wc_parent_id ] : $dolibarr_root_id;
 			if ( $dolibarr_category_id <= 0 ) {
-				$dolibarr_category = $dolibarr_by_name[ $this->normalize_category_name( $wc_name ) ] ?? null;
+				$dolibarr_category = '' !== $wc_slug ? ( $dolibarr_by_slug[ $wc_slug ] ?? null ) : null;
 				if ( empty( $dolibarr_category ) ) {
-					$dolibarr_category_id = $this->create_dolibarr_product_category( $wc_name, $mapped_parent_id );
+					$dolibarr_category_id = $this->create_dolibarr_product_category( $wc_name, $mapped_parent_id, $wc_slug );
 					if ( $dolibarr_category_id > 0 ) {
 						$stats['created']++;
 						$dolibarr_to_wc_map[ $dolibarr_category_id ] = $wc_category_id;
 						$wc_to_dolibarr_map[ $wc_category_id ] = $dolibarr_category_id;
 						$used_woocommerce_ids[ $wc_category_id ] = true;
-						$dolibarr_by_name[ $this->normalize_category_name( $wc_name ) ] = array(
-							'id' => $dolibarr_category_id,
-							'name' => $wc_name,
-							'parent_id' => $mapped_parent_id,
-						);
-						$this->sync_woocommerce_category_term( $wc_category_id, $wc_name, $wc_parent_id );
+						if ( '' !== $wc_slug ) {
+							$dolibarr_by_slug[ $wc_slug ] = array(
+								'id' => $dolibarr_category_id,
+								'name' => $wc_name,
+								'slug' => $wc_slug,
+								'parent_id' => $mapped_parent_id,
+							);
+						}
 					} else {
 						$stats['errors']++;
 						continue;
@@ -268,8 +296,23 @@ class Dolisync_Product_Sync {
 					$dolibarr_to_wc_map[ $dolibarr_category_id ] = $wc_category_id;
 					$wc_to_dolibarr_map[ $wc_category_id ] = $dolibarr_category_id;
 					$used_woocommerce_ids[ $wc_category_id ] = true;
-					$this->sync_woocommerce_category_term( $wc_category_id, $dolibarr_name, $wc_parent_id );
 				}
+			}
+			$dolibarr_sync_state = $this->sync_dolibarr_category( $dolibarr_category_id, $wc_name, $mapped_parent_id, $wc_slug );
+			if ( 'missing' === $dolibarr_sync_state ) {
+				$wpdb->query( $wpdb->prepare( "DELETE FROM {$table} WHERE dolibarr_category_id = %d OR wc_category_id = %d", $dolibarr_category_id, $wc_category_id ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+				unset( $dolibarr_to_wc_map[ $dolibarr_category_id ] );
+				$dolibarr_category_id = $this->create_dolibarr_product_category( $wc_name, $mapped_parent_id, $wc_slug );
+				if ( $dolibarr_category_id <= 0 ) {
+					$stats['errors']++;
+					continue;
+				}
+				$dolibarr_to_wc_map[ $dolibarr_category_id ] = $wc_category_id;
+				$wc_to_dolibarr_map[ $wc_category_id ] = $dolibarr_category_id;
+				$stats['created']++;
+			} elseif ( true !== $dolibarr_sync_state ) {
+				$stats['errors']++;
+				continue;
 			}
 
 			$mapping_state = $this->upsert_category_mapping_row( $dolibarr_category_id, $mapped_parent_id, $wc_category_id, $wc_parent_id, $wc_name );
@@ -286,8 +329,10 @@ class Dolisync_Product_Sync {
 		}
 
 		foreach ( $dolibarr_categories as $dolibarr_category ) {
+			if ( ! $import_to_woocommerce ) { continue; }
 			$dolibarr_category_id = (int) ( $dolibarr_category['id'] ?? 0 );
 			$dolibarr_name = sanitize_text_field( (string) ( $dolibarr_category['name'] ?? '' ) );
+			$dolibarr_slug = $this->normalize_category_slug( $dolibarr_category['slug'] ?? '' );
 			$dolibarr_parent_id = (int) ( $dolibarr_category['parent_id'] ?? 0 );
 			if ( $dolibarr_category_id <= 0 || '' === $dolibarr_name ) {
 				$stats['skipped']++;
@@ -297,15 +342,19 @@ class Dolisync_Product_Sync {
 			$wc_category_id = (int) ( $dolibarr_to_wc_map[ $dolibarr_category_id ] ?? 0 );
 			$mapped_parent_term_id = ( $dolibarr_parent_id > 0 && isset( $dolibarr_to_wc_map[ $dolibarr_parent_id ] ) ) ? (int) $dolibarr_to_wc_map[ $dolibarr_parent_id ] : 0;
 			if ( $wc_category_id <= 0 ) {
-				$wc_category = $this->find_available_woocommerce_category( $woocommerce_categories, $dolibarr_name, $mapped_parent_term_id, $used_woocommerce_ids );
+				if ( '' === $dolibarr_slug ) {
+					$stats['skipped']++;
+					continue;
+				}
+				$wc_category = $this->find_available_woocommerce_category( $woocommerce_categories, $dolibarr_slug, $used_woocommerce_ids );
 				if ( empty( $wc_category ) ) {
-					$wc_category_id = $this->create_woocommerce_category( $dolibarr_name, $mapped_parent_term_id );
+					$wc_category_id = $this->create_woocommerce_category( $dolibarr_name, $mapped_parent_term_id, $dolibarr_slug );
 					if ( $wc_category_id > 0 ) {
 						$stats['created']++;
 						$dolibarr_to_wc_map[ $dolibarr_category_id ] = $wc_category_id;
 						$wc_to_dolibarr_map[ $wc_category_id ] = $dolibarr_category_id;
 						$used_woocommerce_ids[ $wc_category_id ] = true;
-						$this->sync_woocommerce_category_term( $wc_category_id, $dolibarr_name, $mapped_parent_term_id );
+						$this->sync_woocommerce_category_term( $wc_category_id, $dolibarr_name, $mapped_parent_term_id, $dolibarr_slug );
 					} else {
 						$stats['errors']++;
 						continue;
@@ -315,10 +364,10 @@ class Dolisync_Product_Sync {
 					$dolibarr_to_wc_map[ $dolibarr_category_id ] = $wc_category_id;
 					$wc_to_dolibarr_map[ $wc_category_id ] = $dolibarr_category_id;
 					$used_woocommerce_ids[ $wc_category_id ] = true;
-					$this->sync_woocommerce_category_term( $wc_category_id, $dolibarr_name, $mapped_parent_term_id );
+					$this->sync_woocommerce_category_term( $wc_category_id, $dolibarr_name, $mapped_parent_term_id, $dolibarr_slug );
 				}
 			}
-			if ( ! $this->sync_woocommerce_category_term( $wc_category_id, $dolibarr_name, $mapped_parent_term_id ) ) {
+			if ( ! $this->sync_woocommerce_category_term( $wc_category_id, $dolibarr_name, $mapped_parent_term_id, $dolibarr_slug ) ) {
 				$stats['errors']++;
 				continue;
 			}
@@ -362,6 +411,7 @@ class Dolisync_Product_Sync {
 			$categories[] = array(
 				'id'        => (int) $term->term_id,
 				'name'      => sanitize_text_field( (string) $term->name ),
+				'slug'      => $this->normalize_category_slug( $term->slug ),
 				'parent_id' => (int) $term->parent,
 			);
 		}
@@ -386,7 +436,11 @@ class Dolisync_Product_Sync {
 		return preg_replace( '/\s+/', ' ', $name );
 	}
 
-	private function create_woocommerce_category( $name, $parent_id = 0 ) {
+	private function normalize_category_slug( $slug ) {
+		return sanitize_title( sanitize_text_field( (string) $slug ) );
+	}
+
+	private function create_woocommerce_category( $name, $parent_id = 0, $slug = '' ) {
 		$name = sanitize_text_field( (string) $name );
 		if ( '' === $name ) {
 			return 0;
@@ -395,6 +449,10 @@ class Dolisync_Product_Sync {
 		$parent_id = (int) $parent_id;
 
 		$insert_args = array();
+		$slug = $this->normalize_category_slug( $slug );
+		if ( '' !== $slug ) {
+			$insert_args['slug'] = $slug;
+		}
 		if ( $parent_id > 0 ) {
 			$insert_args['parent'] = $parent_id;
 		}
@@ -407,17 +465,20 @@ class Dolisync_Product_Sync {
 		return (int) $created['term_id'];
 	}
 
-	private function create_dolibarr_product_category( $name, $parent_id = 0 ) {
+	private function create_dolibarr_product_category( $name, $parent_id = 0, $slug = '' ) {
 		$name = sanitize_text_field( (string) $name );
 		if ( '' === $name ) {
 			return 0;
 		}
 
-		$payloads = array(
+		$slug = $this->normalize_category_slug( $slug );
+		$payloads = array();
+		if ( '' !== $slug ) {
+			$payloads[] = array( 'label' => $name, 'slug' => $slug, 'type' => 0, 'fk_parent' => (int) $parent_id );
+		}
+		$payloads = array_merge( $payloads, array(
 			array( 'label' => $name, 'type' => 0, 'fk_parent' => (int) $parent_id ),
-			array( 'label' => $name, 'type' => 0 ),
-			array( 'label' => $name ),
-		);
+		) );
 
 		foreach ( $payloads as $payload ) {
 			$response = $this->api_client->post( '/categories', $payload );
@@ -429,6 +490,10 @@ class Dolisync_Product_Sync {
 			if ( $id > 0 ) {
 				return $id;
 			}
+
+			// El POST ya ha sido aceptado: no debe repetirse porque crearía un duplicado.
+			// Algunas versiones de Dolibarr devuelven una respuesta vacía al crear.
+			return $this->find_created_dolibarr_category_id( $name, $parent_id, $slug );
 		}
 
 		return 0;
@@ -459,6 +524,7 @@ class Dolisync_Product_Sync {
 				$categories[] = array(
 					'id'        => (int) ( $category['id'] ?? $category['rowid'] ?? 0 ),
 					'name'      => sanitize_text_field( (string) ( $category['label'] ?? $category['name'] ?? '' ) ),
+					'slug'      => $this->normalize_category_slug( $category['slug'] ?? '' ),
 					'parent_id' => (int) ( $category['fk_parent'] ?? $category['parent_id'] ?? 0 ),
 					'type'      => sanitize_text_field( (string) ( $category['type'] ?? '' ) ),
 				);
@@ -479,10 +545,55 @@ class Dolisync_Product_Sync {
 		}
 
 		if ( is_array( $data ) ) {
-			return (int) ( $data['id'] ?? $data['rowid'] ?? $data[0]['id'] ?? 0 );
+			$id = (int) ( $data['id'] ?? $data['rowid'] ?? $data['data']['id'] ?? $data['data']['rowid'] ?? $data[0]['id'] ?? $data[0]['rowid'] ?? 0 );
+			if ( $id > 0 ) {
+				return $id;
+			}
 		}
 
 		return 0;
+	}
+
+	private function sync_dolibarr_category( $category_id, $name, $parent_id = 0, $slug = '' ) {
+		$category_id = (int) $category_id;
+		$name = sanitize_text_field( (string) $name );
+		$slug = $this->normalize_category_slug( $slug );
+		if ( $category_id <= 0 || '' === $name ) { return false; }
+		$payloads = array();
+		if ( '' !== $slug ) { $payloads[] = array( 'label' => $name, 'slug' => $slug, 'type' => 0, 'fk_parent' => (int) $parent_id ); }
+		$payloads[] = array( 'label' => $name, 'type' => 0, 'fk_parent' => (int) $parent_id );
+		foreach ( $payloads as $payload ) {
+			$response = $this->api_client->put( '/categories/' . $category_id, $payload );
+			if ( ! empty( $response['success'] ) ) { return true; }
+			if ( 404 === (int) ( $response['http_code'] ?? 0 ) ) { return 'missing'; }
+		}
+		return false;
+	}
+
+	private function find_created_dolibarr_category_id( $name, $parent_id, $slug = '' ) {
+		$name = sanitize_text_field( (string) $name );
+		$parent_id = (int) $parent_id;
+		$slug = $this->normalize_category_slug( $slug );
+		$matched_id = 0;
+
+		foreach ( $this->fetch_dolibarr_product_categories() as $category ) {
+			if ( $parent_id !== (int) ( $category['parent_id'] ?? 0 ) ) {
+				continue;
+			}
+
+			$category_slug = $this->normalize_category_slug( $category['slug'] ?? '' );
+			if ( '' !== $slug && '' !== $category_slug ) {
+				if ( $slug !== $category_slug ) {
+					continue;
+				}
+			} elseif ( $this->normalize_category_name( $name ) !== $this->normalize_category_name( $category['name'] ?? '' ) ) {
+				continue;
+			}
+
+			$matched_id = max( $matched_id, (int) ( $category['id'] ?? 0 ) );
+		}
+
+		return $matched_id;
 	}
 
 	private function get_mapping_by_wc_category_id( $wc_category_id ) {
@@ -630,29 +741,10 @@ class Dolisync_Product_Sync {
 		return 1 + $this->get_category_depth( $categories, $parent_id, $trail );
 	}
 
-	private function find_available_woocommerce_category( $woocommerce_categories, $name, $parent_id, $used_woocommerce_ids ) {
-		$normalized_name = $this->normalize_category_name( $name );
-		$parent_id = (int) $parent_id;
-
-		foreach ( (array) $woocommerce_categories as $category ) {
-			if ( ! is_array( $category ) ) {
-				continue;
-			}
-
-			$wc_id = (int) ( $category['id'] ?? 0 );
-			if ( $wc_id <= 0 || isset( $used_woocommerce_ids[ $wc_id ] ) ) {
-				continue;
-			}
-
-			if ( $normalized_name !== $this->normalize_category_name( $category['name'] ?? '' ) ) {
-				continue;
-			}
-
-			if ( $parent_id !== (int) ( $category['parent_id'] ?? 0 ) ) {
-				continue;
-			}
-
-			return $category;
+	private function find_available_woocommerce_category( $woocommerce_categories, $slug, $used_woocommerce_ids ) {
+		$normalized_slug = $this->normalize_category_slug( $slug );
+		if ( '' === $normalized_slug ) {
+			return null;
 		}
 
 		foreach ( (array) $woocommerce_categories as $category ) {
@@ -665,7 +757,7 @@ class Dolisync_Product_Sync {
 				continue;
 			}
 
-			if ( $normalized_name === $this->normalize_category_name( $category['name'] ?? '' ) ) {
+			if ( $normalized_slug === $this->normalize_category_slug( $category['slug'] ?? '' ) ) {
 				return $category;
 			}
 		}
@@ -673,10 +765,11 @@ class Dolisync_Product_Sync {
 		return null;
 	}
 
-	private function sync_woocommerce_category_term( $term_id, $name, $parent_id = 0 ) {
+	private function sync_woocommerce_category_term( $term_id, $name, $parent_id = 0, $slug = '' ) {
 		$term_id = (int) $term_id;
 		$name = sanitize_text_field( (string) $name );
 		$parent_id = (int) $parent_id;
+		$slug = $this->normalize_category_slug( $slug );
 
 		if ( $term_id <= 0 || '' === $name ) {
 			return false;
@@ -687,14 +780,13 @@ class Dolisync_Product_Sync {
 			return false;
 		}
 
-		if ( (string) $term->name !== $name || (int) $term->parent !== $parent_id ) {
+		if ( (string) $term->name !== $name || (int) $term->parent !== $parent_id || ( '' !== $slug && (string) $term->slug !== $slug ) ) {
+			$args = array( 'name' => $name, 'parent' => $parent_id );
+			if ( '' !== $slug ) { $args['slug'] = $slug; }
 			$result = wp_update_term(
 				$term_id,
 				'product_cat',
-				array(
-					'name'   => $name,
-					'parent' => $parent_id,
-				)
+				$args
 			);
 
 			return ! is_wp_error( $result );
@@ -1338,6 +1430,10 @@ class Dolisync_Product_Sync {
 				if ( '' === $name ) {
 					continue;
 				}
+				$approved_mapping = $dolibarr_category_id > 0 ? $this->get_mapping_by_dolibarr_category_id( $dolibarr_category_id ) : array();
+				if ( empty( $approved_mapping['wc_category_id'] ) ) {
+					continue;
+				}
 
 				$dolibarr_parent_id = (int) ( $category['parent_id'] ?? 0 );
 				$wc_parent_id = $this->resolve_woocommerce_parent_category_id( $dolibarr_parent_id );
@@ -1430,17 +1526,9 @@ class Dolisync_Product_Sync {
 			return 0;
 		}
 
-		$term = wp_insert_term(
-			$name,
-			'product_cat',
-			$parent_id > 0 ? array( 'parent' => $parent_id ) : array()
-		);
-
-		if ( is_wp_error( $term ) || empty( $term['term_id'] ) ) {
-			return 0;
-		}
-
-		return (int) $term['term_id'];
+		// Las categorías se gestionan de forma independiente. La sincronización
+		// de productos nunca debe crear términos ni relaciones implícitamente.
+		return 0;
 	}
 
 	private function upsert_product_relation( $dolibarr_product_id, $wc_product_id, $payload, $existing_relation ) {

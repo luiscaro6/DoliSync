@@ -547,7 +547,7 @@ class Dolisync_Settings_Page {
 				<button type="button" class="button button-primary dolisync-sync-button" id="dolisync-sync-stock" data-nonce="<?php echo esc_attr( $nonce ); ?>"><?php echo esc_html__( 'Sincronizar stock ahora', 'dolisync' ); ?></button>
 				<button type="button" class="button button-primary dolisync-sync-button" id="dolisync-sync-products-dolibarr-to-woo" data-nonce="<?php echo esc_attr( $nonce ); ?>"><?php echo esc_html__( 'Sincronizar Dolibarr → WooCommerce', 'dolisync' ); ?></button>
 				<button type="button" class="button button-secondary dolisync-sync-button" id="dolisync-sync-products-woo-to-dolibarr" data-nonce="<?php echo esc_attr( $nonce ); ?>"><?php echo esc_html__( 'Sincronizar WooCommerce → Dolibarr', 'dolisync' ); ?></button>
-				<button type="button" class="button button-secondary dolisync-sync-button" id="dolisync-sync-product-categories" data-nonce="<?php echo esc_attr( $nonce ); ?>"><?php echo esc_html__( 'Sincronizar categorías', 'dolisync' ); ?></button>
+				<a class="button button-secondary" href="<?php echo esc_url( admin_url( 'admin.php?page=dolisync_categories' ) ); ?>"><?php echo esc_html__( 'Gestionar categorías', 'dolisync' ); ?></a>
 			</div>
 
 			<div class="dolisync-section">

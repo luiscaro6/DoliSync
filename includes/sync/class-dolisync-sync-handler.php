@@ -147,8 +147,7 @@ class Dolisync_Sync_Handler {
 			require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/products/class-dolisync-product-sync.php';
 			$sync = new Dolisync_Product_Sync();
 			$per_page = isset( $_POST['per_page'] ) ? max( 1, min( 100, absint( wp_unslash( $_POST['per_page'] ) ) ) ) : 25;
-			$sync_categories = ! isset( $_POST['sync_categories'] ) || rest_sanitize_boolean( wp_unslash( $_POST['sync_categories'] ) );
-			$result = $sync->sync( $page, $per_page, $sync_categories );
+			$result = $sync->sync( $page, $per_page );
 
 			if ( ! empty( $result['success'] ) ) {
 				if ( empty( $result['pagination']['has_more'] ) ) {
@@ -179,11 +178,18 @@ class Dolisync_Sync_Handler {
 		if ( ! wp_verify_nonce( $nonce, DOLISYNC_NONCE_ACTION ) ) {
 			wp_send_json_error( array( 'message' => __( 'Error de validación de seguridad', 'dolisync' ) ), 403 );
 		}
+		$simulation_token = isset( $_POST['simulation_token'] ) ? sanitize_text_field( wp_unslash( $_POST['simulation_token'] ) ) : '';
+		$direction = isset( $_POST['direction'] ) ? sanitize_key( wp_unslash( $_POST['direction'] ) ) : '';
+		$expected_token = get_transient( 'dolisync_category_simulation_' . get_current_user_id() );
+		if ( ! in_array( $direction, array( 'dolibarr_to_woocommerce', 'woocommerce_to_dolibarr' ), true ) || '' === $simulation_token || ! is_array( $expected_token ) || $direction !== ( $expected_token['direction'] ?? '' ) || ! hash_equals( (string) ( $expected_token['token'] ?? '' ), hash( 'sha256', $simulation_token ) ) ) {
+			wp_send_json_error( array( 'message' => __( 'Debes ejecutar y revisar una simulación de categorías antes de aplicar cambios.', 'dolisync' ) ), 409 );
+		}
+		delete_transient( 'dolisync_category_simulation_' . get_current_user_id() );
 
 		try {
 			require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/products/class-dolisync-product-sync.php';
 			$sync = new Dolisync_Product_Sync();
-			$result = $sync->sync_categories();
+			$result = $sync->sync_categories( $direction );
 
 			if ( ! empty( $result['success'] ) ) {
 				wp_send_json_success( array( 'message' => $result['message'], 'stats' => $result['stats'] ) );

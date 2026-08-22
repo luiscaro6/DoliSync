@@ -79,6 +79,15 @@ class Dolisync_Admin {
 
 		add_submenu_page(
 			'dolisync_settings',
+			__( 'Categorías · DoliSync', 'dolisync' ),
+			__( 'Categorías', 'dolisync' ),
+			'manage_options',
+			'dolisync_categories',
+			array( $this, 'render_categories_page' )
+		);
+
+		add_submenu_page(
+			'dolisync_settings',
 			__( 'Pedidos · DoliSync', 'dolisync' ),
 			__( 'Pedidos', 'dolisync' ),
 			'manage_options',
@@ -106,7 +115,7 @@ class Dolisync_Admin {
 	}
 
 	public function enqueue_admin_assets( $hook_suffix ) {
-		$allowed_hooks = array( 'toplevel_page_dolisync_settings', 'dolisync_page_dolisync_products', 'dolisync_page_dolisync_customers', 'dolisync_page_dolisync_orders' );
+		$allowed_hooks = array( 'toplevel_page_dolisync_settings', 'dolisync_page_dolisync_products', 'dolisync_page_dolisync_categories', 'dolisync_page_dolisync_customers', 'dolisync_page_dolisync_orders' );
 		if ( ! in_array( $hook_suffix, $allowed_hooks, true ) || ! $this->user_can_access_settings() ) {
 			return;
 		}
@@ -128,6 +137,11 @@ class Dolisync_Admin {
 				'textDomain' => 'dolisync',
 			)
 		);
+
+		if ( 'dolisync_page_dolisync_categories' === $hook_suffix ) {
+			$categories_js = DOLISYNC_PLUGIN_DIR . 'assets/js/categories.js';
+			wp_enqueue_script( 'dolisync-categories', DOLISYNC_PLUGIN_URL . 'assets/js/categories.js', array( 'dolisync-admin' ), file_exists( $categories_js ) ? (string) filemtime( $categories_js ) : DOLISYNC_VERSION, true );
+		}
 	}
 
 	public function handle_form_submissions() {
@@ -403,6 +417,14 @@ class Dolisync_Admin {
 		}
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/admin/class-dolisync-customers-page.php';
 		$this->render_guarded_page( array( 'Dolisync_Customers_Page', 'render' ) );
+	}
+
+	public function render_categories_page() {
+		if ( ! $this->user_can_access_settings() ) {
+			wp_die( esc_html__( 'No tienes permiso para acceder a esta página.', 'dolisync' ) );
+		}
+		require_once DOLISYNC_PLUGIN_DIR . 'includes/admin/class-dolisync-categories-page.php';
+		$this->render_guarded_page( array( 'Dolisync_Categories_Page', 'render' ) );
 	}
 
 	private function render_guarded_page( $callback ) {

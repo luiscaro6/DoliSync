@@ -77,6 +77,7 @@ function dolisync_init() {
 	if ( is_admin() ) {
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/admin/class-dolisync-admin.php';
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/admin/class-dolisync-products-page.php';
+		require_once DOLISYNC_PLUGIN_DIR . 'includes/admin/class-dolisync-categories-page.php';
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/admin/class-dolisync-orders-page.php';
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/admin/class-dolisync-customers-page.php';
 		Dolisync_Admin::get_instance();
