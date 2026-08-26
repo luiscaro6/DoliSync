@@ -102,7 +102,7 @@ class Dolisync_Categories_Page {
 	}
 
 	private static function make_row( $woo, $dolibarr, $linked, $relation = array() ) {
-		$hierarchy_changed = ! empty( $linked ) && ( (int) ( $woo['parent_id'] ?? 0 ) !== (int) ( $relation['wc_parent_category_id'] ?? 0 ) || (int) ( $dolibarr['parent_id'] ?? 0 ) !== (int) ( $relation['dolibarr_parent_category_id'] ?? 0 ) );
+		$hierarchy_changed = ! empty( $linked ) && ( (int) ( $woo['parent_id'] ?? 0 ) !== (int) ( $relation['wc_parent_category_id'] ?? 0 ) || (int) ( $dolibarr['source_parent_id'] ?? $dolibarr['parent_id'] ?? 0 ) !== (int) ( $relation['dolibarr_parent_category_id'] ?? 0 ) );
 		return array( 'key' => 'w' . (int) ( $woo['id'] ?? 0 ) . '-d' . (int) ( $dolibarr['id'] ?? 0 ), 'woo' => $woo, 'dolibarr' => $dolibarr, 'linked' => (bool) $linked, 'hierarchy_changed' => $hierarchy_changed, 'synced_at' => (string) ( $relation['synced_at'] ?? '' ), 'search' => strtolower( implode( ' ', array_filter( array( $woo['name'] ?? '', $woo['slug'] ?? '', $woo['id'] ?? '', $dolibarr['name'] ?? '', $dolibarr['slug'] ?? '', $dolibarr['id'] ?? '' ) ) ) ) );
 	}
 
@@ -122,10 +122,23 @@ class Dolisync_Categories_Page {
 			foreach ( $items as $item ) { if ( ! is_array( $item ) ) { continue; } $id = (int) ( $item['id'] ?? $item['rowid'] ?? 0 ); if ( $id ) { $result[ $id ] = array( 'id' => $id, 'name' => (string) ( $item['label'] ?? $item['name'] ?? '' ), 'slug' => sanitize_title( $item['slug'] ?? '' ), 'parent_id' => (int) ( $item['fk_parent'] ?? $item['parent_id'] ?? 0 ) ); } }
 			if ( count( $items ) < 100 ) { break; }
 		}
+		$root_id = 0;
+		foreach ( $result as $id => $category ) {
+			if ( 0 === (int) $category['parent_id'] && 'productos' === self::normalize_name( $category['name'] ) ) { $root_id = (int) $id; break; }
+		}
+		if ( $root_id > 0 ) {
+			unset( $result[ $root_id ] );
+			foreach ( $result as &$category ) {
+				$category['source_parent_id'] = (int) $category['parent_id'];
+				if ( $root_id === (int) $category['parent_id'] ) { $category['parent_id'] = 0; }
+			}
+			unset( $category );
+		}
 		return $result;
 	}
 
 	private static function normalize_array( $value ) { if ( is_object( $value ) ) { $value = json_decode( wp_json_encode( $value ), true ); } return is_array( $value ) ? $value : array(); }
+	private static function normalize_name( $value ) { return strtolower( trim( preg_replace( '/\s+/', ' ', sanitize_text_field( (string) $value ) ) ) ); }
 	private static function guard_ajax() { if ( ! current_user_can( 'manage_options' ) ) { wp_send_json_error( array( 'message' => __( 'Permisos insuficientes.', 'dolisync' ) ), 403 ); } check_ajax_referer( DOLISYNC_NONCE_ACTION, 'nonce' ); }
 }
 

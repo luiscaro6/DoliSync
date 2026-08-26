@@ -532,7 +532,10 @@ class Dolisync_Product_Sync_Reverse {
 
 			$variations[] = array(
 				'id' => (int) $variation->get_id(),
-				'sku' => (string) $variation->get_sku(),
+				// En contexto `view`, WooCommerce hereda el SKU del padre cuando la
+				// variación no tiene uno propio. Para identidad y exportación siempre
+				// se necesita el valor crudo de la variación.
+				'sku' => $this->get_own_wc_variation_sku( $variation ),
 				'name' => (string) $variation->get_name(),
 				'description' => (string) $variation->get_description(),
 				'price' => $this->resolve_wc_variation_price( $variation ),
@@ -547,6 +550,13 @@ class Dolisync_Product_Sync_Reverse {
 		}
 
 		return $variations;
+	}
+
+	private function get_own_wc_variation_sku( $variation ) {
+		if ( ! is_object( $variation ) || ! method_exists( $variation, 'get_sku' ) ) {
+			return '';
+		}
+		return trim( (string) $variation->get_sku( 'edit' ) );
 	}
 
 	private function find_dolibarr_product_by_sku( $sku ) {
@@ -674,7 +684,12 @@ class Dolisync_Product_Sync_Reverse {
 
 	private function sync_dolibarr_variation_stock( $dolibarr_product_id, $stock_qty, $price, $wc_variation_id ) {
 		if ( ! is_numeric( $stock_qty ) ) {
-			return false;
+			throw new RuntimeException(
+				sprintf(
+					__( 'La variación WooCommerce %d no gestiona stock individual o no tiene una cantidad numérica; no se creará ningún movimiento.', 'dolisync' ),
+					(int) $wc_variation_id
+				)
+			);
 		}
 
 		$response = $this->api_client->get( '/products/' . (int) $dolibarr_product_id, array( 'includestockdata' => 1 ) );
@@ -682,21 +697,25 @@ class Dolisync_Product_Sync_Reverse {
 			throw new Exception( (string) ( $response['message'] ?? __( 'No se pudo consultar el stock actual de la variante en Dolibarr.', 'dolisync' ) ) );
 		}
 
-		$product = $this->normalize_api_array( $response['data'] ?? array() );
-		$current_stock = $product['stock_reel'] ?? null;
-		if ( ! is_numeric( $current_stock ) ) {
-			throw new Exception( __( 'Dolibarr no devolvió un stock numérico para la variante.', 'dolisync' ) );
-		}
-
-		$target_stock = (float) $stock_qty;
-		$quantity_delta = $target_stock - (float) $current_stock;
-		if ( abs( $quantity_delta ) < 0.000001 ) {
-			return false;
-		}
-
 		$warehouse_id = $this->resolve_warehouse_id();
 		if ( $warehouse_id <= 0 ) {
 			throw new Exception( __( 'Configura el ID del almacén de Dolibarr antes de sincronizar stock de variaciones.', 'dolisync' ) );
+		}
+
+		$product = $this->normalize_api_array( $response['data'] ?? array() );
+		if ( isset( $product['data'] ) && is_array( $product['data'] ) ) { $product = $product['data']; }
+		$current_stock = $this->get_dolibarr_warehouse_stock( $product, $warehouse_id );
+		$target_stock = (float) $stock_qty;
+		$quantity_delta = $target_stock - $current_stock;
+		Dolisync_Action_Logger::log_action(
+			'stock',
+			'comprobación_woo_dolibarr',
+			'procesando',
+			sprintf( 'Variación Woo %d / producto Dolibarr %d / almacén %d: actual %.6f, objetivo %.6f, diferencia %.6f.', (int) $wc_variation_id, (int) $dolibarr_product_id, (int) $warehouse_id, $current_stock, $target_stock, $quantity_delta ),
+			get_current_user_id()
+		);
+		if ( abs( $quantity_delta ) < 0.000001 ) {
+			return false;
 		}
 
 		$movement = $this->api_client->post( '/stockmovements', array(
@@ -714,6 +733,35 @@ class Dolisync_Product_Sync_Reverse {
 		return true;
 	}
 
+	private function get_dolibarr_warehouse_stock( $product, $warehouse_id ) {
+		if ( ! array_key_exists( 'stock_warehouse', $product ) || ! is_array( $product['stock_warehouse'] ) ) {
+			throw new RuntimeException( __( 'Dolibarr no devolvió el detalle de stock por almacén para la variante.', 'dolisync' ) );
+		}
+
+		$stocks = $this->normalize_api_array( $product['stock_warehouse'] );
+		if ( isset( $stocks[ $warehouse_id ] ) ) {
+			$warehouse_stock = $this->normalize_api_array( $stocks[ $warehouse_id ] );
+			foreach ( array( 'real', 'reel', 'stock_reel' ) as $key ) {
+				if ( isset( $warehouse_stock[ $key ] ) && is_numeric( $warehouse_stock[ $key ] ) ) { return (float) $warehouse_stock[ $key ]; }
+			}
+		}
+		foreach ( $stocks as $warehouse_stock ) {
+			$warehouse_stock = $this->normalize_api_array( $warehouse_stock );
+			// En la respuesta nativa de Dolibarr `id` identifica la fila de
+			// product_stock, no el almacén. Solo aceptar campos inequívocos.
+			$id = (int) ( $warehouse_stock['warehouse_id'] ?? $warehouse_stock['fk_entrepot'] ?? 0 );
+			if ( $id !== (int) $warehouse_id ) { continue; }
+			foreach ( array( 'real', 'reel', 'stock_reel' ) as $key ) {
+				if ( isset( $warehouse_stock[ $key ] ) && is_numeric( $warehouse_stock[ $key ] ) ) { return (float) $warehouse_stock[ $key ]; }
+			}
+		}
+		if ( empty( $stocks ) && isset( $product['stock_reel'] ) && is_numeric( $product['stock_reel'] ) && abs( (float) $product['stock_reel'] ) >= 0.000001 ) {
+			throw new RuntimeException( __( 'Dolibarr devolvió stock total, pero no el desglose del almacén configurado para la variante.', 'dolisync' ) );
+		}
+		// Si el producto todavía no tiene entrada para el almacén, su stock allí es cero.
+		return 0.0;
+	}
+
 	private function sync_dolibarr_variations( $dolibarr_id, $wc_product_id, $payload ) {
 		global $wpdb;
 		$table = $wpdb->prefix . 'dolisync_product_variation_relations';
@@ -725,11 +773,6 @@ class Dolisync_Product_Sync_Reverse {
 			$relation = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table} WHERE wc_variation_id = %d LIMIT 1", $wc_variation_id ), ARRAY_A ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 			$combination_id = (int) ( $relation['dolibarr_combination_id'] ?? 0 );
 			$child_id = (int) ( $relation['dolibarr_variation_id'] ?? 0 );
-			if ( $combination_id <= 0 ) {
-				$matched = $this->find_unmapped_dolibarr_variation( $dolibarr_id, $variation );
-				$combination_id = (int) ( $matched['combination_id'] ?? 0 );
-				$child_id = (int) ( $matched['child_id'] ?? 0 );
-			}
 			$features = array();
 			foreach ( (array) ( $variation['attributes'] ?? array() ) as $attribute_name => $attribute_value ) {
 				$attribute_id = $this->ensure_dolibarr_attribute( $attribute_name );
@@ -738,14 +781,33 @@ class Dolisync_Product_Sync_Reverse {
 					$features[ $attribute_id ] = $value_id;
 				}
 			}
-			if ( empty( $features ) ) {
-				continue;
+
+			// Nunca confiar ciegamente en IDs persistidos: una relación antigua
+			// puede apuntar a una combinación de otro producto. Primero se valida
+			// contra la lista del padre y, si no coincide, se repara por atributos.
+			$variant_info = $combination_id > 0 ? $this->find_dolibarr_combination( $dolibarr_id, $combination_id ) : array();
+			if ( ! empty( $variant_info ) && ( empty( $features ) || $this->combination_matches_features( $variant_info, $features ) ) ) {
+				$child_id = (int) ( $variant_info['fk_product_child'] ?? 0 );
+			} else {
+				$combination_id = 0;
+				$child_id = 0;
+				$matched = $this->find_unmapped_dolibarr_variation( $dolibarr_id, $variation, $features );
+				$combination_id = (int) ( $matched['combination_id'] ?? 0 );
+				$child_id = (int) ( $matched['child_id'] ?? 0 );
+			}
+			if ( empty( $features ) && $combination_id <= 0 && $child_id <= 0 ) {
+				throw new RuntimeException(
+					sprintf(
+						__( 'La variación WooCommerce %d no tiene atributos válidos para crear su combinación en Dolibarr.', 'dolisync' ),
+						$wc_variation_id
+					)
+				);
 			}
 
 			// El precio comercial pertenece al producto padre. Las combinaciones
 			// solo representan atributos y nunca modifican ese precio.
 			$price = $parent_price;
-			if ( $combination_id <= 0 ) {
+			if ( $combination_id <= 0 && $child_id <= 0 ) {
 				$created = $this->api_client->post( '/products/' . $dolibarr_id . '/variants', array(
 					'weight_impact' => 0,
 					'price_impact' => 0,
@@ -756,7 +818,18 @@ class Dolisync_Product_Sync_Reverse {
 				if ( empty( $created['success'] ) ) {
 					throw new Exception( (string) ( $created['message'] ?? __( 'No se pudo crear una variante en Dolibarr.', 'dolisync' ) ) );
 				}
-				$combination_id = $this->extract_dolibarr_id( $created['data'] ?? null );
+				// Dolibarr devuelve el ID del producto hijo, no el ID de la
+				// combinación. Releer las variantes del padre permite obtener y
+				// validar ambos identificadores antes de actualizar o mover stock.
+				$created_id = $this->extract_dolibarr_id( $created['data'] ?? null );
+				$created_relation = $this->resolve_created_dolibarr_variation( $dolibarr_id, $created_id, $features );
+				$combination_id = (int) ( $created_relation['combination_id'] ?? 0 );
+				$child_id = (int) ( $created_relation['child_id'] ?? 0 );
+				if ( $combination_id <= 0 || $child_id <= 0 ) {
+					throw new RuntimeException(
+						sprintf( __( 'Dolibarr creó la variación WooCommerce %d, pero no fue posible resolver su producto hijo y su combinación.', 'dolisync' ), $wc_variation_id )
+					);
+				}
 			}
 
 			if ( $combination_id > 0 ) {
@@ -794,21 +867,154 @@ class Dolisync_Product_Sync_Reverse {
 				if ( '' !== trim( (string) ( $variation['sku'] ?? '' ) ) ) {
 					$child_payload['ref'] = (string) $variation['sku'];
 				}
-				$child_update = $this->api_client->put( '/products/' . $child_id, $child_payload );
-				if ( empty( $child_update['success'] ) ) {
-					throw new Exception( (string) ( $child_update['message'] ?? __( 'No se pudo actualizar el producto hijo de la variante.', 'dolisync' ) ) );
-				}
+				$variation_product_updated = $this->update_dolibarr_variation_product( $child_id, $child_payload );
 				$stock_changed = $this->sync_dolibarr_variation_stock( $child_id, $variation['stock_qty'] ?? null, $price, $wc_variation_id ) || $stock_changed;
 				$this->image_sync->sync_woocommerce_to_dolibarr( $wc_variation_id, $child_id, '' );
-				$this->set_dolibarr_sale_status( $child_id, $payload['active'] );
+				if ( $variation_product_updated ) {
+					$this->set_dolibarr_sale_status( $child_id, $payload['active'] );
+				}
 			}
 
+			if ( $child_id <= 0 ) {
+				throw new RuntimeException(
+					sprintf( __( 'No se encontró el producto hijo de Dolibarr para la variación WooCommerce %d; no se guardará su relación.', 'dolisync' ), $wc_variation_id )
+				);
+			}
 			$this->save_variation_relation( $dolibarr_id, $wc_product_id, $child_id, $combination_id, $variation );
 		}
 		return $stock_changed;
 	}
 
-	private function find_unmapped_dolibarr_variation( $dolibarr_product_id, $variation ) {
+	/**
+	 * Actualiza el producto hijo sin permitir que un barcode heredado y duplicado
+	 * bloquee la sincronización de toda la variante.
+	 *
+	 * Dolibarr conserva los campos ausentes en un PUT y vuelve a validar el
+	 * barcode existente. Algunas variantes creadas por ProductCombination pueden
+	 * terminar con un barcode automático ya usado. Solo ante ese error concreto se
+	 * regenera el barcode y se repite una vez; los barcodes válidos se preservan.
+	 */
+	private function update_dolibarr_variation_product( $child_id, $payload ) {
+		$endpoint = '/products/' . (int) $child_id;
+		$payload = $this->remove_conflicting_variation_reference( $child_id, $payload );
+		$response = $this->api_client->put( $endpoint, $payload );
+		if ( ! empty( $response['success'] ) ) {
+			return true;
+		}
+
+		if ( ! $this->is_duplicate_barcode_error( $response ) ) {
+			throw new Exception( $this->get_api_response_error( $response, __( 'No se pudo actualizar el producto hijo de la variante.', 'dolisync' ) ) );
+		}
+
+		$repair_payload = $payload;
+		// El módulo de barcode puede exigir un valor. `auto` hace que Dolibarr
+		// genere el siguiente código compatible con su máscara y tipo actuales.
+		$repair_payload['barcode'] = 'auto';
+		$response = $this->api_client->put( $endpoint, $repair_payload );
+		if ( empty( $response['success'] ) ) {
+			$error_message = $this->get_api_response_error( $response, __( 'Dolibarr rechazó la actualización de la variante.', 'dolisync' ) );
+			if ( Dolisync_API_Client::is_barcode_validation_error_message( $error_message ) ) {
+				// La información descriptiva no debe impedir que se ajuste el stock
+				// del producto hijo ya resuelto y validado por sus atributos.
+				$this->stats['details'][] = array(
+					'action' => 'variation_metadata_skipped',
+					'dolibarr_variation_id' => (int) $child_id,
+					'message' => sprintf(
+						__( 'Se omitió la actualización descriptiva del producto hijo %1$d por un conflicto de barcode en Dolibarr. El stock y la vinculación continuarán.', 'dolisync' ),
+						(int) $child_id
+					),
+				);
+				return false;
+			}
+			throw new Exception(
+				sprintf(
+					__( 'No se pudo regenerar el código de barras duplicado del producto hijo %1$d: %2$s', 'dolisync' ),
+					(int) $child_id,
+					$error_message
+				)
+			);
+		}
+		return true;
+	}
+
+	/**
+	 * No intenta apropiarse de una referencia que ya identifica otro producto.
+	 * La combinación y sus atributos siguen siendo la identidad autoritativa del
+	 * hijo dentro del producto padre.
+	 */
+	private function remove_conflicting_variation_reference( $child_id, $payload ) {
+		$ref = trim( (string) ( $payload['ref'] ?? '' ) );
+		if ( '' === $ref ) {
+			return $payload;
+		}
+
+		$owner_id = $this->find_dolibarr_product_owner_by_ref( $ref );
+		if ( $owner_id <= 0 || $owner_id === (int) $child_id ) {
+			return $payload;
+		}
+
+		unset( $payload['ref'] );
+		$this->stats['details'][] = array(
+			'action' => 'variation_ref_conflict',
+			'dolibarr_variation_id' => (int) $child_id,
+			'conflicting_dolibarr_product_id' => $owner_id,
+			'ref' => $ref,
+			'message' => sprintf(
+				__( 'La referencia %1$s ya pertenece al producto Dolibarr %2$d; no se asignará al hijo %3$d. Se mantiene la vinculación validada por atributos.', 'dolisync' ),
+				$ref,
+				$owner_id,
+				(int) $child_id
+			),
+		);
+		return $payload;
+	}
+
+	private function find_dolibarr_product_owner_by_ref( $ref ) {
+		$escaped_ref = str_replace( array( '\\', "'" ), array( '\\\\', "\\'" ), trim( (string) $ref ) );
+		if ( '' === $escaped_ref ) {
+			return 0;
+		}
+
+		$response = $this->api_client->get(
+			'/products',
+			array(
+				'sortfield' => 't.rowid',
+				'sortorder' => 'ASC',
+				'limit' => 2,
+				'mode' => 1,
+				'sqlfilters' => "(t.ref:=:'{$escaped_ref}')",
+			)
+		);
+		if ( empty( $response['success'] ) ) {
+			return 0;
+		}
+
+		foreach ( $this->normalize_api_list( $response['data'] ?? array() ) as $product ) {
+			$product = $this->normalize_api_array( $product );
+			$product_id = (int) ( $product['id'] ?? $product['rowid'] ?? 0 );
+			if ( $product_id > 0 ) {
+				return $product_id;
+			}
+		}
+		return 0;
+	}
+
+	private function is_duplicate_barcode_error( $response ) {
+		$message = (string) ( $response['api_message'] ?? $response['message'] ?? '' );
+		return Dolisync_API_Client::is_duplicate_barcode_error_message( $message );
+	}
+
+	private function get_api_response_error( $response, $fallback ) {
+		if ( ! empty( $response['api_message'] ) ) {
+			return (string) $response['api_message'];
+		}
+		if ( ! empty( $response['message'] ) ) {
+			return (string) $response['message'];
+		}
+		return (string) $fallback;
+	}
+
+	private function find_unmapped_dolibarr_variation( $dolibarr_product_id, $variation, $features = array() ) {
 		global $wpdb;
 		$table = $wpdb->prefix . 'dolisync_product_variation_relations';
 		$response = $this->api_client->get( '/products/' . $dolibarr_product_id . '/variants' );
@@ -816,12 +1022,15 @@ class Dolisync_Product_Sync_Reverse {
 			return array();
 		}
 		$target_sku = trim( (string) ( $variation['sku'] ?? '' ) );
-		foreach ( $this->normalize_api_array( $response['data'] ?? array() ) as $combination ) {
+		foreach ( $this->normalize_api_list( $response['data'] ?? array() ) as $combination ) {
 			$combination = $this->normalize_api_array( $combination );
 			$combination_id = (int) ( $combination['id'] ?? $combination['rowid'] ?? 0 );
 			$child_id = (int) ( $combination['fk_product_child'] ?? 0 );
-			if ( $combination_id <= 0 || $child_id <= 0 || $wpdb->get_var( $wpdb->prepare( "SELECT id FROM {$table} WHERE dolibarr_combination_id = %d OR dolibarr_variation_id = %d LIMIT 1", $combination_id, $child_id ) ) ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+			if ( $combination_id <= 0 || $child_id <= 0 || $wpdb->get_var( $wpdb->prepare( "SELECT id FROM {$table} WHERE wc_variation_id <> %d AND (dolibarr_combination_id = %d OR dolibarr_variation_id = %d) LIMIT 1", (int) ( $variation['id'] ?? 0 ), $combination_id, $child_id ) ) ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 				continue;
+			}
+			if ( ! empty( $features ) && $this->combination_matches_features( $combination, $features ) ) {
+				return array( 'combination_id' => $combination_id, 'child_id' => $child_id );
 			}
 			$child_response = $this->api_client->get( '/products/' . $child_id );
 			$child = ! empty( $child_response['success'] ) ? $this->normalize_api_array( $child_response['data'] ?? array() ) : array();
@@ -884,13 +1093,93 @@ class Dolisync_Product_Sync_Reverse {
 		if ( empty( $response['success'] ) ) {
 			return array();
 		}
-		foreach ( $this->normalize_api_array( $response['data'] ?? array() ) as $combination ) {
+		foreach ( $this->normalize_api_list( $response['data'] ?? array() ) as $combination ) {
 			$combination = $this->normalize_api_array( $combination );
 			if ( (int) ( $combination['id'] ?? $combination['rowid'] ?? 0 ) === (int) $combination_id ) {
 				return $combination;
 			}
 		}
 		return array();
+	}
+
+	private function resolve_created_dolibarr_variation( $dolibarr_product_id, $created_id, $features ) {
+		if ( (int) $created_id <= 0 ) {
+			return array();
+		}
+
+		$response = $this->api_client->get( '/products/' . (int) $dolibarr_product_id . '/variants' );
+		if ( empty( $response['success'] ) ) {
+			throw new RuntimeException( (string) ( $response['message'] ?? __( 'No se pudo releer la variante recién creada en Dolibarr.', 'dolisync' ) ) );
+		}
+
+		return $this->select_created_dolibarr_variation( $response['data'] ?? array(), $created_id, $features );
+	}
+
+	private function select_created_dolibarr_variation( $combinations, $created_id, $features ) {
+		$combination_id_match = array();
+		$feature_matches = array();
+		$created_id = (int) $created_id;
+
+		foreach ( $this->normalize_api_list( $combinations ) as $combination ) {
+			$combination = $this->normalize_api_array( $combination );
+			$combination_id = (int) ( $combination['id'] ?? $combination['rowid'] ?? 0 );
+			$child_id = (int) ( $combination['fk_product_child'] ?? 0 );
+			if ( $combination_id <= 0 || $child_id <= 0 ) {
+				continue;
+			}
+
+			$resolved = array( 'combination_id' => $combination_id, 'child_id' => $child_id );
+			$features_match = empty( $features ) || $this->combination_matches_features( $combination, $features );
+			if ( $child_id === $created_id && $features_match ) {
+				return $resolved;
+			}
+			// Compatibilidad defensiva con versiones o extensiones que devuelvan
+			// el ID de combinación en vez del producto hijo.
+			if ( $combination_id === $created_id && $features_match ) {
+				$combination_id_match = $resolved;
+			}
+			if ( ! empty( $features ) && $features_match ) {
+				$feature_matches[] = $resolved;
+			}
+		}
+
+		if ( ! empty( $combination_id_match ) ) {
+			return $combination_id_match;
+		}
+		return 1 === count( $feature_matches ) ? $feature_matches[0] : array();
+	}
+
+	private function combination_matches_features( $combination, $features ) {
+		$actual = array();
+		foreach ( (array) ( $combination['attributes'] ?? array() ) as $attribute ) {
+			$attribute = $this->normalize_api_array( $attribute );
+			$attribute_id = (int) ( $attribute['fk_prod_attr'] ?? $attribute['fk_product_attribute'] ?? 0 );
+			$value_id = (int) ( $attribute['fk_prod_attr_val'] ?? $attribute['fk_product_attribute_value'] ?? 0 );
+			if ( $attribute_id > 0 && $value_id > 0 ) { $actual[ $attribute_id ] = $value_id; }
+		}
+		$expected = array();
+		foreach ( (array) $features as $attribute_id => $value_id ) { $expected[ (int) $attribute_id ] = (int) $value_id; }
+		ksort( $actual ); ksort( $expected );
+		return ! empty( $expected ) && $actual === $expected;
+	}
+
+	private function normalize_api_list( $data ) {
+		$data = $this->normalize_api_array( $data );
+		if ( isset( $data['data'] ) && is_array( $data['data'] ) ) { $data = $data['data']; }
+		if ( ! isset( $data[0] ) && ! empty( $data ) ) {
+			if ( isset( $data['id'] ) || isset( $data['rowid'] ) ) {
+				$data = array( $data );
+			} else {
+				$normalized = array();
+				foreach ( $data as $key => $item ) {
+					$item = $this->normalize_api_array( $item );
+					if ( is_numeric( $key ) && ! isset( $item['id'], $item['rowid'] ) ) { $item['id'] = (int) $key; }
+					$normalized[] = $item;
+				}
+				$data = $normalized;
+			}
+		}
+		return $data;
 	}
 
 	private function save_variation_relation( $dolibarr_id, $wc_product_id, $child_id, $combination_id, $variation ) {

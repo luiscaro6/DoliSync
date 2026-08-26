@@ -257,8 +257,16 @@ class Dolisync_API_Client {
 				if ( $api_message !== $user_message ) {
 					$log_message = $user_message . ' | API: ' . $api_message;
 				}
+				$permanent_barcode_error = self::is_barcode_validation_error_message( $api_message );
+				if ( $permanent_barcode_error ) {
+					// Dolibarr responde 500, pero es una validación permanente. Devolverla
+					// de inmediato permite que la sincronización repare la variante.
+					$error_code = 'validation_error';
+					$user_message = $api_message;
+					$log_message = $api_message;
+				}
 
-				if ( $this->can_retry_http_response( $method, $last_http_code ) && $attempt < self::MAX_RETRIES ) {
+				if ( ! $permanent_barcode_error && $this->can_retry_http_response( $method, $last_http_code ) && $attempt < self::MAX_RETRIES ) {
 					$retry_delay = $this->get_retry_delay( $response, $attempt );
 					$retry_message = sprintf(
 						__( '%1$s Reintento %2$d de %3$d en %4$d segundos.', 'dolisync' ),
@@ -272,7 +280,9 @@ class Dolisync_API_Client {
 					continue;
 				}
 
-				if ( ! $this->can_retry_http_response( $method, $last_http_code ) && $this->is_retryable_http_code( $last_http_code ) ) {
+				if ( $permanent_barcode_error ) {
+					$log_message .= ' ' . __( 'No se reintenta como error temporal porque Dolibarr ha rechazado la validación del código de barras.', 'dolisync' );
+				} elseif ( ! $this->can_retry_http_response( $method, $last_http_code ) && $this->is_retryable_http_code( $last_http_code ) ) {
 					$log_message .= ' ' . __( 'La operación no se ha reintentado automáticamente para evitar duplicados; comprueba el resultado en Dolibarr antes de repetirla.', 'dolisync' );
 				}
 				$this->logger->log( 'ERROR', $endpoint, $method, $request_payload, $this->sanitize_for_log( $decoded ), $last_http_code, $time_ms, $log_message, $origin, $executor, $cron_interval );
@@ -395,6 +405,18 @@ class Dolisync_API_Client {
 
 	private function is_retryable_http_code( $http_code ) {
 		return 429 === (int) $http_code || ( (int) $http_code >= 500 && (int) $http_code <= 599 );
+	}
+
+	public static function is_duplicate_barcode_error_message( $message ) {
+		return 1 === preg_match(
+			'/(?:Error(?:Product)?BarCode(?:AlreadyExists|AlreadyUsed)|(?:product\s+)?bar\s*code[^\r\n]*(?:already\s+exists|already\s+used|duplicate)|c[oó]digo\s+de\s+barras?[^\r\n]*(?:ya\s+existe|ya\s+utilizado|duplicado)|code\s+barres?[^\r\n]*(?:existe\s+d[eé]j[aà]|d[eé]j[aà]\s+utilis[eé]|dupliqu[eé]))/iu',
+			(string) $message
+		);
+	}
+
+	public static function is_barcode_validation_error_message( $message ) {
+		return self::is_duplicate_barcode_error_message( $message )
+			|| 1 === preg_match( '/Error(?:Bad)?BarCode(?:Required|Syntax)/i', (string) $message );
 	}
 
 	/** Solo se reintentan automáticamente operaciones idempotentes. */

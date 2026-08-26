@@ -134,7 +134,7 @@ jQuery(function ($) {
 		const $button = $(this);
 		const $result = $('#dolisync-product-sync-result');
 		const nonce = $button.data('nonce');
-		const totals = {checked: 0, updated: 0, unchanged: 0, skipped: 0, errors: 0};
+		const totals = {checked: 0, updated: 0, unchanged: 0, variable_parents: 0, skipped: 0, errors: 0};
 		$button.prop('disabled', true);
 		$result.html('<div class="notice notice-info inline"><p>Comprobando existencias en Dolibarr…</p></div>').show();
 
@@ -162,6 +162,7 @@ jQuery(function ($) {
 						'<li>Comprobados: ' + totals.checked + '</li>' +
 						'<li>Actualizados: ' + totals.updated + '</li>' +
 						'<li>Sin cambios: ' + totals.unchanged + '</li>' +
+						'<li>Padres variables (stock en sus variaciones): ' + totals.variable_parents + '</li>' +
 						'<li>Omitidos: ' + totals.skipped + '</li>' +
 						'<li>Errores: ' + totals.errors + '</li></ul>';
 					$result.html('<div class="notice ' + noticeClass + ' inline"><p><strong>' + (totals.errors > 0 ? '⚠ ' : '✓ ') + title + '</strong></p>' + html + '</div>');
@@ -647,7 +648,8 @@ function dolisyncInitProductsCatalog() {
 		return '<details class="dolisync-variations"><summary>' + variations.length + ' ' + (variations.length === 1 ? 'variación' : 'variaciones') + '</summary>' +
 			'<div class="dolisync-variation-list">' + variations.map(function (variation) {
 				const attrs = (variation.attributes || []).filter(Boolean).join(' · ');
-				return '<div><strong>' + esc(variation.effective_sku || variation.sku || ('#' + variation.id)) + '</strong><span>' +
+				const reference = variation.sku_generated ? 'Sin SKU propio' : (variation.effective_sku || variation.sku || ('#' + variation.id));
+				return '<div><strong>' + esc(reference) + '</strong><span>' +
 					esc(attrs || variation.name || '') + '</span><small>' + money(variation.price) + ' · Stock ' +
 					esc(variation.stock === null || typeof variation.stock === 'undefined' ? '—' : variation.stock) + '</small></div>';
 			}).join('') + '</div></details>';

@@ -193,7 +193,16 @@ class Dolisync_Product_Sync {
 			'errors' => 0,
 		);
 
-		$dolibarr_categories = $this->sort_categories_by_parent_depth( $this->fetch_dolibarr_product_categories() );
+		$dolibarr_categories = $this->fetch_dolibarr_product_categories();
+		$dolibarr_root_id = $this->find_dolibarr_products_root_id( $dolibarr_categories );
+		if ( $dolibarr_root_id > 0 ) {
+			// "Productos" es un contenedor técnico de Dolibarr. En WooCommerce
+			// sus hijos deben vivir directamente en la raíz.
+			$dolibarr_categories = array_values( array_filter( $dolibarr_categories, static function ( $category ) use ( $dolibarr_root_id ) {
+				return (int) ( $category['id'] ?? 0 ) !== $dolibarr_root_id;
+			} ) );
+		}
+		$dolibarr_categories = $this->sort_categories_by_parent_depth( $dolibarr_categories );
 		$woocommerce_categories = $this->sort_categories_by_parent_depth( $this->fetch_woocommerce_product_categories() );
 		$dolibarr_by_id = array();
 		foreach ( $dolibarr_categories as $category ) {
@@ -204,6 +213,22 @@ class Dolisync_Product_Sync {
 			$woocommerce_by_id[ (int) ( $category['id'] ?? 0 ) ] = $category;
 		}
 		$existing_rows = $wpdb->get_results( "SELECT * FROM {$table}", ARRAY_A ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		if ( $dolibarr_root_id > 0 && in_array( $direction, array( 'bidirectional', 'dolibarr_to_woocommerce' ), true ) ) {
+			foreach ( (array) $existing_rows as $index => $row ) {
+				if ( (int) ( $row['dolibarr_category_id'] ?? 0 ) !== $dolibarr_root_id ) {
+					continue;
+				}
+				$obsolete_wc_root_id = (int) ( $row['wc_category_id'] ?? 0 );
+				$wpdb->delete( $table, array( 'id' => (int) ( $row['id'] ?? 0 ) ), array( '%d' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+				unset( $existing_rows[ $index ], $woocommerce_by_id[ $obsolete_wc_root_id ] );
+				$woocommerce_categories = array_values( array_filter( $woocommerce_categories, static function ( $category ) use ( $obsolete_wc_root_id ) {
+					return (int) ( $category['id'] ?? 0 ) !== $obsolete_wc_root_id;
+				} ) );
+				if ( $obsolete_wc_root_id > 0 && term_exists( $obsolete_wc_root_id, 'product_cat' ) ) {
+					wp_delete_term( $obsolete_wc_root_id, 'product_cat' );
+				}
+			}
+		}
 		$dolibarr_to_wc_map = array();
 		$wc_to_dolibarr_map = array();
 		foreach ( (array) $existing_rows as $row ) {
@@ -234,7 +259,7 @@ class Dolisync_Product_Sync {
 
 		$export_to_dolibarr = in_array( $direction, array( 'bidirectional', 'woocommerce_to_dolibarr' ), true );
 		$import_to_woocommerce = in_array( $direction, array( 'bidirectional', 'dolibarr_to_woocommerce' ), true );
-		$dolibarr_root_id = $export_to_dolibarr ? $this->ensure_dolibarr_products_root_category() : 0;
+		$dolibarr_root_id = $export_to_dolibarr ? $this->ensure_dolibarr_products_root_category() : $dolibarr_root_id;
 		if ( $export_to_dolibarr && $dolibarr_root_id <= 0 ) {
 			$stats['errors']++;
 			return $stats;
@@ -421,13 +446,21 @@ class Dolisync_Product_Sync {
 
 	private function ensure_dolibarr_products_root_category() {
 		$categories = $this->fetch_dolibarr_product_categories();
-		foreach ( $categories as $category ) {
-			if ( 'productos' === $this->normalize_category_name( $category['name'] ?? '' ) ) {
-				return (int) ( $category['id'] ?? 0 );
-			}
+		$root_id = $this->find_dolibarr_products_root_id( $categories );
+		if ( $root_id > 0 ) {
+			return $root_id;
 		}
 
 		return $this->create_dolibarr_product_category( 'Productos' );
+	}
+
+	private function find_dolibarr_products_root_id( $categories ) {
+		foreach ( (array) $categories as $category ) {
+			if ( 0 === (int) ( $category['parent_id'] ?? 0 ) && 'productos' === $this->normalize_category_name( $category['name'] ?? '' ) ) {
+				return (int) ( $category['id'] ?? 0 );
+			}
+		}
+		return 0;
 	}
 
 	private function normalize_category_name( $name ) {
