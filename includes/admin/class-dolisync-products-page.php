@@ -7,6 +7,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
+require_once dirname( __DIR__ ) . '/sync/products/class-dolisync-product-variation-reference.php';
+
 class Dolisync_Products_Page {
 	const PAGE_SIZE = 20;
 	const MAX_DOLIBARR_PAGES = 100;
@@ -352,6 +354,15 @@ class Dolisync_Products_Page {
 		$result = array();
 		$products = wc_get_products( array( 'limit' => -1, 'status' => array( 'publish', 'draft', 'pending', 'private', 'future' ), 'orderby' => 'ID', 'order' => 'ASC' ) );
 		foreach ( (array) $products as $product ) {
+			$product_sku = trim( (string) $product->get_sku() );
+			$product_reference = '' !== $product_sku ? $product_sku : 'WC-' . (int) $product->get_id();
+			$parent_attribute_order = array();
+			foreach ( (array) $product->get_attributes() as $attribute_key => $attribute ) {
+				$normalized_key = sanitize_title( preg_replace( '/^attribute_/', '', (string) $attribute_key ) );
+				if ( '' !== $normalized_key ) {
+					$parent_attribute_order[] = $normalized_key;
+				}
+			}
 			$variations = array();
 			if ( $product->is_type( 'variable' ) ) {
 				foreach ( $product->get_children() as $variation_id ) {
@@ -359,24 +370,43 @@ class Dolisync_Products_Page {
 					if ( ! $variation ) {
 						continue;
 					}
+					$variation_id = (int) $variation->get_id();
 					$variation_sku = trim( (string) $variation->get_sku( 'edit' ) );
+					$raw_attributes = array();
+					foreach ( (array) $variation->get_attributes() as $attribute_key => $attribute_value ) {
+						$normalized_key = sanitize_title( preg_replace( '/^attribute_/', '', (string) $attribute_key ) );
+						if ( '' !== $normalized_key && '' !== (string) $attribute_value ) {
+							$raw_attributes[ $normalized_key ] = (string) $attribute_value;
+						}
+					}
+					$variation_attributes = array();
+					foreach ( $parent_attribute_order as $attribute_key ) {
+						if ( isset( $raw_attributes[ $attribute_key ] ) ) {
+							$variation_attributes[ $attribute_key ] = $raw_attributes[ $attribute_key ];
+							unset( $raw_attributes[ $attribute_key ] );
+						}
+					}
+					$variation_attributes = array_merge( $variation_attributes, $raw_attributes );
+					if ( Dolisync_Product_Variation_Reference::is_generated( $variation_sku, $product_reference, $variation_attributes, $variation_id ) ) {
+						$variation_sku = '';
+					}
 					$variations[] = array(
-						'id'         => (int) $variation->get_id(),
+						'id'         => $variation_id,
 						'sku'        => $variation_sku,
-						'effective_sku' => '' !== $variation_sku ? $variation_sku : 'WC-VAR-' . (int) $variation->get_id(),
+						'effective_sku' => '' !== $variation_sku ? $variation_sku : Dolisync_Product_Variation_Reference::build( $product_reference, $variation_attributes, $variation_id ),
 						'sku_generated' => '' === $variation_sku,
 						'name'       => (string) $variation->get_name(),
 						'price'      => self::woo_price_excluding_tax( $variation ),
 						'stock'      => $variation->get_stock_quantity(),
-						'attributes' => array_values( array_filter( array_map( 'strval', $variation->get_attributes() ) ) ),
+						'attributes' => array_values( $variation_attributes ),
 					);
 				}
 			}
 			$result[ $product->get_id() ] = array(
 				'id'         => (int) $product->get_id(),
-				'sku'        => (string) $product->get_sku(),
-				'effective_sku' => '' !== trim( (string) $product->get_sku() ) ? (string) $product->get_sku() : 'WC-' . (int) $product->get_id(),
-				'sku_generated' => '' === trim( (string) $product->get_sku() ),
+				'sku'        => $product_sku,
+				'effective_sku' => $product_reference,
+				'sku_generated' => '' === $product_sku,
 				'name'       => (string) $product->get_name(),
 				'price'      => self::woo_price_excluding_tax( $product ),
 				'stock'      => $product->get_stock_quantity(),
@@ -469,7 +499,7 @@ class Dolisync_Products_Page {
 		unset( $parent );
 
 		$variation_table = $wpdb->prefix . 'dolisync_product_variation_relations';
-		$variation_rows = $wpdb->get_results( "SELECT dolibarr_product_id, dolibarr_variation_id, wc_variation_id, sku, price, stock_qty, attributes_json FROM {$variation_table} ORDER BY id ASC", ARRAY_A ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		$variation_rows = $wpdb->get_results( "SELECT dolibarr_product_id, dolibarr_variation_id, wc_product_id, wc_variation_id, sku, price, stock_qty, attributes_json FROM {$variation_table} ORDER BY id ASC", ARRAY_A ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 		$use_stored_variations = array();
 		foreach ( (array) $variation_rows as $variation ) {
 			$parent_id = (int) ( $variation['dolibarr_product_id'] ?? 0 );
@@ -514,12 +544,20 @@ class Dolisync_Products_Page {
 					$display_price = $stored_price;
 				}
 
+				$stored_attributes = array_values( (array) json_decode( (string) $variation['attributes_json'], true ) );
+				$stored_reference = trim( (string) ( $child['ref'] ?? $child['sku'] ?? $variation['sku'] ) );
+				if ( '' === $stored_reference ) {
+					$parent_reference = trim( (string) ( $result[ $parent_id ]['sku'] ?? '' ) );
+					if ( '' === $parent_reference ) {
+						$parent_reference = 'WC-' . (int) ( $variation['wc_product_id'] ?? 0 );
+					}
+					$stored_reference = Dolisync_Product_Variation_Reference::build( $parent_reference, $stored_attributes, (int) $variation['wc_variation_id'] );
+				}
+
 				$result[ $parent_id ]['variations'][] = array(
 					'id' => $child_id,
 					'sku' => (string) ( $child['ref'] ?? $child['sku'] ?? $variation['sku'] ),
-					'effective_sku' => '' !== trim( (string) ( $child['ref'] ?? $child['sku'] ?? $variation['sku'] ) )
-						? (string) ( $child['ref'] ?? $child['sku'] ?? $variation['sku'] )
-						: 'WC-VAR-' . (int) $variation['wc_variation_id'],
+					'effective_sku' => $stored_reference,
 					'sku_generated' => '' === trim( (string) ( $child['ref'] ?? $child['sku'] ?? $variation['sku'] ) ),
 					'name' => (string) ( $child['label'] ?? $child['name'] ?? '' ),
 					// Dolibarr expone `price`/`price_ht` como base imponible incluso si
@@ -528,7 +566,7 @@ class Dolisync_Products_Page {
 					// Nunca presentar el valor solicitado/guardado localmente como si
 					// hubiese sido confirmado por la API de Dolibarr.
 					'stock' => self::dolibarr_stock( $child ),
-					'attributes' => array_values( (array) json_decode( (string) $variation['attributes_json'], true ) ),
+					'attributes' => $stored_attributes,
 				);
 			}
 		}

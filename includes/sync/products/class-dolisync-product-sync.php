@@ -7,6 +7,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
+require_once __DIR__ . '/class-dolisync-product-variation-reference.php';
+
 class Dolisync_Product_Sync {
 	private const DEFAULT_PAGE_SIZE = 25;
 	private const MAX_PAGE_SIZE = 100;
@@ -1333,13 +1335,19 @@ class Dolisync_Product_Sync {
 		global $wpdb;
 		$table = $wpdb->prefix . 'dolisync_product_variation_relations';
 		$kept_variation_ids = array();
+		$parent_product = wc_get_product( $wc_product_id );
+		$parent_reference = $parent_product && method_exists( $parent_product, 'get_sku' ) ? trim( (string) $parent_product->get_sku( 'edit' ) ) : '';
+		if ( '' === $parent_reference ) {
+			$parent_reference = 'WC-' . (int) $wc_product_id;
+		}
 
 		foreach ( $variations as $variation ) {
-			$existing_wc_variation_id = (int) $wpdb->get_var( $wpdb->prepare(
-				"SELECT wc_variation_id FROM {$table} WHERE dolibarr_product_id = %d AND dolibarr_variation_id = %d LIMIT 1",
+			$existing_variation_relation = $wpdb->get_row( $wpdb->prepare(
+				"SELECT wc_variation_id, sku FROM {$table} WHERE dolibarr_product_id = %d AND dolibarr_variation_id = %d LIMIT 1",
 				$dolibarr_product_id,
 				(int) ( $variation['id'] ?? 0 )
-			) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+			), ARRAY_A ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+			$existing_wc_variation_id = (int) ( $existing_variation_relation['wc_variation_id'] ?? 0 );
 			if ( $existing_wc_variation_id <= 0 ) {
 				$existing_wc_variation_id = $this->find_unmapped_wc_variation( $wc_product_id, $variation );
 			}
@@ -1349,7 +1357,11 @@ class Dolisync_Product_Sync {
 			}
 			$variation_product->set_parent_id( $wc_product_id );
 			$variation_product->set_status( 'publish' );
-			$variation_product->set_sku( $variation['sku'] );
+			$incoming_reference = trim( (string) ( $variation['sku'] ?? '' ) );
+			$reference_is_generated = ( ! empty( $existing_variation_relation ) && '' === trim( (string) ( $existing_variation_relation['sku'] ?? '' ) ) )
+				|| Dolisync_Product_Variation_Reference::is_generated( $incoming_reference, $parent_reference, $variation['attributes'] ?? array(), $existing_wc_variation_id );
+			$woo_variation_sku = $reference_is_generated ? '' : $incoming_reference;
+			$variation_product->set_sku( $woo_variation_sku );
 			if ( '' !== (string) $variation['price'] ) {
 				$variation_product->set_regular_price( (string) $variation['price'] );
 				$variation_product->set_price( (string) $variation['price'] );
@@ -1378,7 +1390,7 @@ class Dolisync_Product_Sync {
 					'dolibarr_variation_id' => (int) ( $variation['id'] ?? 0 ),
 					'dolibarr_combination_id' => (int) ( $variation['combination_id'] ?? 0 ),
 					'wc_variation_id' => (int) $variation_id,
-					'sku' => $variation['sku'],
+					'sku' => $woo_variation_sku,
 					'price' => $variation['price'],
 					'stock_qty' => $variation['stock_qty'],
 					'attributes_json' => wp_json_encode( $variation['attributes'] ),

@@ -7,6 +7,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
+require_once __DIR__ . '/class-dolisync-product-variation-reference.php';
+
 class Dolisync_Product_Sync_Reverse {
 	private const DEFAULT_PAGE_SIZE = 25;
 	private const MAX_PAGE_SIZE = 100;
@@ -515,6 +517,17 @@ class Dolisync_Product_Sync_Reverse {
 
 		$variation_ids = $wc_product->get_children();
 		$variations = array();
+		$parent_reference = trim( (string) $wc_product->get_sku( 'edit' ) );
+		if ( '' === $parent_reference ) {
+			$parent_reference = 'WC-' . (int) $wc_product->get_id();
+		}
+		$parent_attribute_order = array();
+		foreach ( (array) $wc_product->get_attributes() as $attribute_key => $attribute ) {
+			$normalized_key = sanitize_title( preg_replace( '/^attribute_/', '', (string) $attribute_key ) );
+			if ( '' !== $normalized_key ) {
+				$parent_attribute_order[] = $normalized_key;
+			}
+		}
 
 		foreach ( (array) $variation_ids as $variation_id ) {
 			$variation = wc_get_product( (int) $variation_id );
@@ -522,20 +535,28 @@ class Dolisync_Product_Sync_Reverse {
 				continue;
 			}
 
-			$attributes = array();
+			$raw_attributes = array();
 			foreach ( (array) $variation->get_attributes() as $attribute_key => $attribute_value ) {
 				$normalized_key = sanitize_title( preg_replace( '/^attribute_/', '', (string) $attribute_key ) );
 				if ( '' !== $normalized_key && '' !== (string) $attribute_value ) {
-					$attributes[ $normalized_key ] = sanitize_text_field( (string) $attribute_value );
+					$raw_attributes[ $normalized_key ] = sanitize_text_field( (string) $attribute_value );
 				}
 			}
+			$attributes = array();
+			foreach ( $parent_attribute_order as $attribute_key ) {
+				if ( isset( $raw_attributes[ $attribute_key ] ) ) {
+					$attributes[ $attribute_key ] = $raw_attributes[ $attribute_key ];
+					unset( $raw_attributes[ $attribute_key ] );
+				}
+			}
+			$attributes = array_merge( $attributes, $raw_attributes );
 
 			$variations[] = array(
 				'id' => (int) $variation->get_id(),
 				// En contexto `view`, WooCommerce hereda el SKU del padre cuando la
 				// variación no tiene uno propio. Para identidad y exportación siempre
 				// se necesita el valor crudo de la variación.
-				'sku' => $this->get_own_wc_variation_sku( $variation ),
+				'sku' => $this->get_own_wc_variation_sku( $variation, $parent_reference, $attributes ),
 				'name' => (string) $variation->get_name(),
 				'description' => (string) $variation->get_description(),
 				'price' => $this->resolve_wc_variation_price( $variation ),
@@ -552,11 +573,37 @@ class Dolisync_Product_Sync_Reverse {
 		return $variations;
 	}
 
-	private function get_own_wc_variation_sku( $variation ) {
+	private function get_own_wc_variation_sku( $variation, $parent_reference = '', $attributes = array() ) {
 		if ( ! is_object( $variation ) || ! method_exists( $variation, 'get_sku' ) ) {
 			return '';
 		}
-		return trim( (string) $variation->get_sku( 'edit' ) );
+		$sku = trim( (string) $variation->get_sku( 'edit' ) );
+		$variation_id = method_exists( $variation, 'get_id' ) ? (int) $variation->get_id() : 0;
+		if ( Dolisync_Product_Variation_Reference::is_generated( $sku, $parent_reference, $attributes, $variation_id ) ) {
+			return '';
+		}
+		return $sku;
+	}
+
+	/**
+	 * Construye una referencia estable para el producto hijo de Dolibarr.
+	 *
+	 * Los SKU propios de las variaciones tienen prioridad. Cuando no existen, la
+	 * referencia conserva la raíz del producto padre y concatena, en el orden
+	 * configurado por WooCommerce, los valores normalizados de sus atributos.
+	 */
+	private function build_dolibarr_variation_reference( $payload, $variation ) {
+		$variation_sku = trim( (string) ( $variation['sku'] ?? '' ) );
+		if ( '' !== $variation_sku ) {
+			return $variation_sku;
+		}
+
+		$parent_reference = trim( (string) ( $payload['sku'] ?? '' ) );
+		if ( '' === $parent_reference ) {
+			$parent_reference = 'WC-' . (int) ( $payload['wc_product_id'] ?? 0 );
+		}
+
+		return Dolisync_Product_Variation_Reference::build( $parent_reference, $variation['attributes'] ?? array(), $variation['id'] ?? 0 );
 	}
 
 	private function find_dolibarr_product_by_sku( $sku ) {
@@ -771,6 +818,12 @@ class Dolisync_Product_Sync_Reverse {
 		foreach ( (array) $payload['variations'] as $variation ) {
 			$wc_variation_id = (int) ( $variation['id'] ?? 0 );
 			$relation = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table} WHERE wc_variation_id = %d LIMIT 1", $wc_variation_id ), ARRAY_A ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+			// Una relación sin SKU confirma que la referencia remota fue generada,
+			// incluso si una importación antigua llegó a copiarla al campo SKU de Woo.
+			if ( ! empty( $relation ) && '' === trim( (string) ( $relation['sku'] ?? '' ) ) ) {
+				$variation['sku'] = '';
+			}
+			$variation_reference = $this->build_dolibarr_variation_reference( $payload, $variation );
 			$combination_id = (int) ( $relation['dolibarr_combination_id'] ?? 0 );
 			$child_id = (int) ( $relation['dolibarr_variation_id'] ?? 0 );
 			$features = array();
@@ -813,7 +866,7 @@ class Dolisync_Product_Sync_Reverse {
 					'price_impact' => 0,
 					'price_impact_is_percent' => false,
 					'features' => $features,
-					'reference' => '' !== trim( (string) ( $variation['sku'] ?? '' ) ) ? (string) $variation['sku'] : 'WC-VAR-' . $wc_variation_id,
+					'reference' => $variation_reference,
 				) );
 				if ( empty( $created['success'] ) ) {
 					throw new Exception( (string) ( $created['message'] ?? __( 'No se pudo crear una variante en Dolibarr.', 'dolisync' ) ) );
@@ -864,9 +917,9 @@ class Dolisync_Product_Sync_Reverse {
 					'caller' => 'dolisync',
 				);
 				$child_payload[ 'TTC' === $payload['price_base_type'] ? 'price_ttc' : 'price' ] = $price;
-				if ( '' !== trim( (string) ( $variation['sku'] ?? '' ) ) ) {
-					$child_payload['ref'] = (string) $variation['sku'];
-				}
+				// Se envía siempre para migrar también referencias técnicas antiguas
+				// (`WC-VAR-*`) durante la siguiente sincronización manual.
+				$child_payload['ref'] = $variation_reference;
 				$variation_product_updated = $this->update_dolibarr_variation_product( $child_id, $child_payload );
 				$stock_changed = $this->sync_dolibarr_variation_stock( $child_id, $variation['stock_qty'] ?? null, $price, $wc_variation_id ) || $stock_changed;
 				$this->image_sync->sync_woocommerce_to_dolibarr( $wc_variation_id, $child_id, '' );

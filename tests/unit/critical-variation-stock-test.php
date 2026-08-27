@@ -19,6 +19,12 @@ if ( ! function_exists( '__' ) ) {
 	}
 }
 
+if ( ! function_exists( 'remove_accents' ) ) {
+	function remove_accents( $text ) {
+		return strtr( $text, array( 'á' => 'a', 'é' => 'e', 'í' => 'i', 'ó' => 'o', 'ú' => 'u', 'Á' => 'A', 'É' => 'E', 'Í' => 'I', 'Ó' => 'O', 'Ú' => 'U', 'ñ' => 'n', 'Ñ' => 'N' ) );
+	}
+}
+
 require_once dirname( __DIR__, 2 ) . '/includes/sync/products/class-dolisync-stock-sync.php';
 require_once dirname( __DIR__, 2 ) . '/includes/api/class-dolisync-api-client.php';
 require_once dirname( __DIR__, 2 ) . '/includes/sync/products/class-dolisync-product-sync-reverse.php';
@@ -89,11 +95,83 @@ class Dolisync_Test_WC_Variation_With_Inherited_SKU {
 	}
 }
 
+class Dolisync_Test_WC_Variation_With_Legacy_SKU {
+	public function get_id() {
+		return 317;
+	}
+
+	public function get_sku( $context = 'view' ) {
+		return 'WC_VAR_317';
+	}
+}
+
+class Dolisync_Test_WC_Variation_With_Generated_SKU {
+	public function get_id() {
+		return 317;
+	}
+
+	public function get_sku( $context = 'view' ) {
+		return '80826_38_BEIGE';
+	}
+}
+
 $own_sku_method = $reverse_reflection->getMethod( 'get_own_wc_variation_sku' );
 dolisync_test_assert_same(
 	'',
 	$own_sku_method->invoke( $reverse_sync, new Dolisync_Test_WC_Variation_With_Inherited_SKU() ),
 	'Una variación sin SKU propio no debe heredar 80826 del producto padre durante la exportación.'
+);
+dolisync_test_assert_same(
+	'',
+	$own_sku_method->invoke( $reverse_sync, new Dolisync_Test_WC_Variation_With_Legacy_SKU() ),
+	'Una referencia técnica heredada no debe impedir la migración al formato basado en el SKU del padre.'
+);
+dolisync_test_assert_same(
+	'',
+	$own_sku_method->invoke( $reverse_sync, new Dolisync_Test_WC_Variation_With_Generated_SKU(), '80826', array( 'talla' => '38', 'color' => 'beige' ) ),
+	'Una referencia construida que haya vuelto a WooCommerce no debe convertirse en un SKU manual.'
+);
+
+$variation_reference_method = $reverse_reflection->getMethod( 'build_dolibarr_variation_reference' );
+dolisync_test_assert_same(
+	'80826_38_BEIGE',
+	$variation_reference_method->invoke( $reverse_sync, array( 'sku' => '80826', 'wc_product_id' => 45 ), array( 'id' => 317, 'sku' => '', 'attributes' => array( 'talla' => '38', 'color' => 'beige' ) ) ),
+	'Una variación sin SKU propio debe concatenar el SKU del padre y los valores de sus atributos.'
+);
+dolisync_test_assert_same(
+	'VARIANTE-36-MARRON',
+	$variation_reference_method->invoke( $reverse_sync, array( 'sku' => '80826', 'wc_product_id' => 45 ), array( 'id' => 317, 'sku' => 'VARIANTE-36-MARRON', 'attributes' => array( 'talla' => '38', 'color' => 'beige' ) ) ),
+	'El SKU propio de la variación debe seguir teniendo prioridad.'
+);
+dolisync_test_assert_same(
+	'WC-45_38_BEIGE',
+	$variation_reference_method->invoke( $reverse_sync, array( 'sku' => '', 'wc_product_id' => 45 ), array( 'id' => 317, 'sku' => '', 'attributes' => array( 'talla' => '38', 'color' => 'beige' ) ) ),
+	'Si tampoco existe SKU de padre, la variación debe partir de la referencia técnica del padre.'
+);
+dolisync_test_assert_same(
+	'80826_38_1_2_MARRON_CLARO',
+	$variation_reference_method->invoke( $reverse_sync, array( 'sku' => '80826', 'wc_product_id' => 45 ), array( 'id' => 317, 'sku' => '', 'attributes' => array( 'talla' => '38 1/2', 'color' => 'Marrón claro' ) ) ),
+	'Los atributos deben quedar en mayúsculas, sin acentos y separados de forma segura.'
+);
+dolisync_test_assert_same(
+	'80826_VAR_317',
+	$variation_reference_method->invoke( $reverse_sync, array( 'sku' => '80826', 'wc_product_id' => 45 ), array( 'id' => 317, 'sku' => '', 'attributes' => array() ) ),
+	'Sin atributos utilizables debe conservar un respaldo único basado en el ID.'
+);
+dolisync_test_assert_same(
+	true,
+	Dolisync_Product_Variation_Reference::is_generated( '80826_38_BEIGE', '80826', array( 'talla' => '38', 'color' => 'beige' ), 317 ),
+	'La importación debe reconocer la referencia construida para no convertirla en un SKU propio de WooCommerce.'
+);
+dolisync_test_assert_same(
+	true,
+	Dolisync_Product_Variation_Reference::is_generated( '80826-VAR-317', '80826', array( 'talla' => '38', 'color' => 'beige' ), 317 ),
+	'La importación debe reconocer también el formato técnico anterior.'
+);
+dolisync_test_assert_same(
+	false,
+	Dolisync_Product_Variation_Reference::is_generated( 'SKU-COMERCIAL-38', '80826', array( 'talla' => '38', 'color' => 'beige' ), 317 ),
+	'Un SKU comercial explícito no debe confundirse con una referencia generada.'
 );
 
 class Dolisync_Test_Variation_API_Client {
