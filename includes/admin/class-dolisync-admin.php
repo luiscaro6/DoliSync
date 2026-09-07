@@ -53,14 +53,14 @@ class Dolisync_Admin {
 			__( 'DoliSync - Sincronización Dolibarr ↔ WooCommerce', 'dolisync' ),
 			__( 'DoliSync', 'dolisync' ),
 			'manage_options',
-			'dolisync_settings',
-			array( $this, 'render_page' ),
+			'dolisync_dashboard',
+			array( $this, 'render_dashboard_page' ),
 			'dashicons-swap',
 			25
 		);
 
 		add_submenu_page(
-			'dolisync_settings',
+			'dolisync_dashboard',
 			__( 'Clientes · DoliSync', 'dolisync' ),
 			__( 'Clientes', 'dolisync' ),
 			'manage_options',
@@ -69,7 +69,7 @@ class Dolisync_Admin {
 		);
 
 		add_submenu_page(
-			'dolisync_settings',
+			'dolisync_dashboard',
 			__( 'Productos · DoliSync', 'dolisync' ),
 			__( 'Productos', 'dolisync' ),
 			'manage_options',
@@ -78,7 +78,7 @@ class Dolisync_Admin {
 		);
 
 		add_submenu_page(
-			'dolisync_settings',
+			'dolisync_dashboard',
 			__( 'Categorías · DoliSync', 'dolisync' ),
 			__( 'Categorías', 'dolisync' ),
 			'manage_options',
@@ -87,7 +87,7 @@ class Dolisync_Admin {
 		);
 
 		add_submenu_page(
-			'dolisync_settings',
+			'dolisync_dashboard',
 			__( 'Pedidos · DoliSync', 'dolisync' ),
 			__( 'Pedidos', 'dolisync' ),
 			'manage_options',
@@ -95,27 +95,30 @@ class Dolisync_Admin {
 			array( $this, 'render_orders_page' )
 		);
 
+		add_submenu_page(
+			'dolisync_dashboard',
+			__( 'Ajustes · DoliSync', 'dolisync' ),
+			__( 'Ajustes', 'dolisync' ),
+			'manage_options',
+			'dolisync_settings',
+			array( $this, 'render_page' )
+		);
+
 		/* WordPress crea automáticamente la entrada del menú principal como primer
-		 * submenú. La presentamos como "Ajustes" y la movemos al final. */
+		 * submenú. La presentamos como "Inicio", encima de Clientes. */
 		global $submenu;
-		if ( isset( $submenu['dolisync_settings'] ) && is_array( $submenu['dolisync_settings'] ) ) {
-			$settings_item = null;
-			foreach ( $submenu['dolisync_settings'] as $index => $item ) {
-				if ( isset( $item[2] ) && 'dolisync_settings' === $item[2] ) {
-					$settings_item = $item;
-					unset( $submenu['dolisync_settings'][ $index ] );
+		if ( isset( $submenu['dolisync_dashboard'] ) && is_array( $submenu['dolisync_dashboard'] ) ) {
+			foreach ( $submenu['dolisync_dashboard'] as $index => $item ) {
+				if ( isset( $item[2] ) && 'dolisync_dashboard' === $item[2] ) {
+					$submenu['dolisync_dashboard'][ $index ][0] = __( 'Inicio', 'dolisync' );
 					break;
 				}
-			}
-			if ( null !== $settings_item ) {
-				$settings_item[0] = __( 'Ajustes', 'dolisync' );
-				$submenu['dolisync_settings'][] = $settings_item;
 			}
 		}
 	}
 
 	public function enqueue_admin_assets( $hook_suffix ) {
-		$allowed_hooks = array( 'toplevel_page_dolisync_settings', 'dolisync_page_dolisync_products', 'dolisync_page_dolisync_categories', 'dolisync_page_dolisync_customers', 'dolisync_page_dolisync_orders' );
+		$allowed_hooks = array( 'toplevel_page_dolisync_dashboard', 'dolisync_page_dolisync_settings', 'dolisync_page_dolisync_products', 'dolisync_page_dolisync_categories', 'dolisync_page_dolisync_customers', 'dolisync_page_dolisync_orders' );
 		if ( ! in_array( $hook_suffix, $allowed_hooks, true ) || ! $this->user_can_access_settings() ) {
 			return;
 		}
@@ -134,6 +137,7 @@ class Dolisync_Admin {
 			array(
 				'ajaxUrl'    => admin_url( 'admin-ajax.php' ),
                 'nonce'      => wp_create_nonce( DOLISYNC_NONCE_ACTION ),
+				'settingsUrl' => admin_url( 'admin.php?page=dolisync_settings' ),
 				'textDomain' => 'dolisync',
 			)
 		);
@@ -141,6 +145,13 @@ class Dolisync_Admin {
 		if ( 'dolisync_page_dolisync_categories' === $hook_suffix ) {
 			$categories_js = DOLISYNC_PLUGIN_DIR . 'assets/js/categories.js';
 			wp_enqueue_script( 'dolisync-categories', DOLISYNC_PLUGIN_URL . 'assets/js/categories.js', array( 'dolisync-admin' ), file_exists( $categories_js ) ? (string) filemtime( $categories_js ) : DOLISYNC_VERSION, true );
+		}
+
+		if ( 'toplevel_page_dolisync_dashboard' === $hook_suffix ) {
+			$dashboard_css = DOLISYNC_PLUGIN_DIR . 'assets/css/dashboard.css';
+			$dashboard_js = DOLISYNC_PLUGIN_DIR . 'assets/js/dashboard.js';
+			wp_enqueue_style( 'dolisync-dashboard', DOLISYNC_PLUGIN_URL . 'assets/css/dashboard.css', array( 'dolisync-admin' ), file_exists( $dashboard_css ) ? (string) filemtime( $dashboard_css ) : DOLISYNC_VERSION );
+			wp_enqueue_script( 'dolisync-dashboard', DOLISYNC_PLUGIN_URL . 'assets/js/dashboard.js', array( 'dolisync-admin' ), file_exists( $dashboard_js ) ? (string) filemtime( $dashboard_js ) : DOLISYNC_VERSION, true );
 		}
 	}
 
@@ -308,6 +319,7 @@ class Dolisync_Admin {
 			wp_safe_redirect( admin_url( 'admin.php?page=dolisync_settings&tab=settings&dolisync-save-error=database_error' ) );
 			exit;
 		}
+		delete_transient( 'dolisync_dashboard_remote_status' );
 
         require_once DOLISYNC_PLUGIN_DIR . 'includes/class-dolisync-cron.php';
         Dolisync_Cron::schedule( $cron_interval );
@@ -335,6 +347,15 @@ class Dolisync_Admin {
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/admin/class-dolisync-settings-page.php';
 		$page = new Dolisync_Settings_Page();
 		$page->render();
+	}
+
+	public function render_dashboard_page() {
+		if ( ! $this->user_can_access_settings() ) {
+			wp_die( esc_html__( 'No tienes permiso para acceder a esta página.', 'dolisync' ) );
+		}
+
+		require_once DOLISYNC_PLUGIN_DIR . 'includes/admin/class-dolisync-dashboard-page.php';
+		Dolisync_Dashboard_Page::render();
 	}
 
 	private function handle_save_warehouse() {

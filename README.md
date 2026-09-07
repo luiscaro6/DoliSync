@@ -6,7 +6,7 @@ DoliSync sincroniza productos, clientes y existencias, transforma los pedidos de
 WooCommerce en facturas de cliente de Dolibarr y recupera el PDF fiscal para
 adjuntarlo al correo del comprador.
 
-![Versión](https://img.shields.io/badge/versi%C3%B3n-1.0.1-2563eb)
+![Versión](https://img.shields.io/badge/versi%C3%B3n-1.1.0-2563eb)
 ![PHP](https://img.shields.io/badge/PHP-%3E%3D%208.1-777bb4?logo=php&logoColor=white)
 ![WordPress](https://img.shields.io/badge/WordPress-%3E%3D%206.0-21759b?logo=wordpress&logoColor=white)
 ![WooCommerce](https://img.shields.io/badge/WooCommerce-%3E%3D%206.0-96588a&logo=woocommerce&logoColor=white)
@@ -18,6 +18,17 @@ adjuntarlo al correo del comprador.
 > también dependen de la configuración y los módulos activos en Dolibarr.
 
 ## Qué hace DoliSync
+
+### Panel de inicio
+
+- Abre DoliSync en un panel visual con el estado de la conexión, endpoint y
+  versiones de Dolibarr, WordPress, WooCommerce, PHP y el propio plugin.
+- Resume productos, variantes, clientes, pedidos y el porcentaje que ya está
+  relacionado con Dolibarr.
+- Muestra la última sincronización de stock, la próxima ejecución automática,
+  el almacén activo, la salud operativa y la actividad reciente.
+- Incluye accesos directos a cada área y permite actualizar la comprobación
+  remota sin abandonar el panel.
 
 ### Catálogo de productos
 

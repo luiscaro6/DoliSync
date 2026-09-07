@@ -9,7 +9,7 @@
  * Plugin Name:   DoliSync
  * Plugin URI:    https://github.com/luiscaro6/DoliSync
  * Description:   Sincronización Dolibarr CRM ↔ WooCommerce vía API REST
- * Version:       1.0.1
+ * Version:       1.1.0
  * Author:        Luis Caro	
  * License:       GPL-3.0-or-later
  * License URI:   https://www.gnu.org/licenses/gpl-3.0.html
@@ -25,7 +25,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 if ( ! defined( 'DOLISYNC_VERSION' ) ) {
-	define( 'DOLISYNC_VERSION', '1.0.1' );
+	define( 'DOLISYNC_VERSION', '1.1.0' );
 }
 
 if ( ! defined( 'DOLISYNC_PLUGIN_DIR' ) ) {
@@ -76,6 +76,7 @@ function dolisync_init() {
 
 	if ( is_admin() ) {
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/admin/class-dolisync-admin.php';
+		require_once DOLISYNC_PLUGIN_DIR . 'includes/admin/class-dolisync-dashboard-page.php';
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/admin/class-dolisync-products-page.php';
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/admin/class-dolisync-categories-page.php';
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/admin/class-dolisync-orders-page.php';

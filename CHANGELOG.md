@@ -5,6 +5,19 @@ Todos los cambios relevantes de DoliSync se documentan en este archivo.
 El formato está basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/)
 y el proyecto utiliza [versionado semántico](https://semver.org/lang/es/).
 
+## [1.1.0] - 2026-09-08
+
+### Añadido
+
+- Nuevo panel visual de inicio, situado encima de Clientes, con estado y endpoint
+  de conexión, versión de Dolibarr y accesos directos a las áreas principales.
+- Indicadores de productos, variantes, clientes, pedidos y cobertura de sus
+  relaciones con Dolibarr.
+- Resumen de la última sincronización de stock, próxima ejecución, almacén,
+  incidencias operativas, latencia de API y actividad reciente.
+- Actualización manual del panel con caché breve para evitar comprobaciones
+  remotas innecesarias en cada visita.
+
 ## [1.0.1] - 2026-09-07
 
 ### Añadido
@@ -105,6 +118,7 @@ y el proyecto utiliza [versionado semántico](https://semver.org/lang/es/).
 - Cifrado de credenciales, controles de permisos y saneamiento de registros.
 - Compatibilidad con WooCommerce HPOS y soporte opcional para Cloudflare Access.
 
+[1.1.0]: https://github.com/luiscaro6/DoliSync/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/luiscaro6/DoliSync/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/luiscaro6/DoliSync/compare/v1.0.0-rc1...v1.0.0
 [1.0.0-rc1]: https://github.com/luiscaro6/DoliSync/releases/tag/v1.0.0-rc1
