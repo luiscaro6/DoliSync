@@ -6,7 +6,7 @@ DoliSync sincroniza productos, clientes y existencias, transforma los pedidos de
 WooCommerce en facturas de cliente de Dolibarr y recupera el PDF fiscal para
 adjuntarlo al correo del comprador.
 
-![Versión](https://img.shields.io/badge/versi%C3%B3n-1.0.0-2563eb)
+![Versión](https://img.shields.io/badge/versi%C3%B3n-1.0.1-2563eb)
 ![PHP](https://img.shields.io/badge/PHP-%3E%3D%208.1-777bb4?logo=php&logoColor=white)
 ![WordPress](https://img.shields.io/badge/WordPress-%3E%3D%206.0-21759b?logo=wordpress&logoColor=white)
 ![WooCommerce](https://img.shields.io/badge/WooCommerce-%3E%3D%206.0-96588a&logo=woocommerce&logoColor=white)
@@ -28,6 +28,8 @@ adjuntarlo al correo del comprador.
   la pestaña **Productos > Conflictos**, eligiendo qué sistema se conserva.
 - Crea y actualiza productos simples, variables, categorías, atributos,
   variaciones, precios, descripciones e imágenes.
+- Asigna a cada producto hijo de Dolibarr las categorías del padre para que las
+  variantes con stock propio aparezcan en TakePOS.
 - Omite los registros que no han cambiado para reducir llamadas y escrituras.
 - Marca fuera de venta en Dolibarr los productos no publicados u ocultos de
   WooCommerce.
@@ -199,6 +201,14 @@ Las pantallas de productos y clientes incluyen dos pestañas de simulación, una
 por cada sentido. Cada simulación calcula altas y modificaciones de solo lectura,
 muestra los campos afectados y permite enviar una fila concreta o todos los
 cambios pendientes de forma secuencial.
+
+### Reparación de categorías de variantes
+
+En **DoliSync → Categorías → Asistente de variantes** puedes reparar los productos
+hijo creados antes de que DoliSync propagase sus categorías. El asistente procesa
+únicamente relaciones ya existentes, valida que cada hijo siga perteneciendo a su
+padre y añade las categorías de Dolibarr que falten. No elimina categorías adicionales
+que se hayan asignado manualmente al hijo en Dolibarr.
 
 ### Diagnóstico operativo
 

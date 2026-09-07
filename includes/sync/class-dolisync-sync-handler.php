@@ -14,6 +14,7 @@ class Dolisync_Sync_Handler {
 		add_action( 'wp_ajax_dolisync_sync_contacts_reverse', array( __CLASS__, 'handle_sync_reverse_request' ) );
 		add_action( 'wp_ajax_dolisync_sync_products', array( __CLASS__, 'handle_product_sync_request' ) );
 		add_action( 'wp_ajax_dolisync_sync_product_categories', array( __CLASS__, 'handle_product_categories_sync_request' ) );
+		add_action( 'wp_ajax_dolisync_migrate_variation_categories', array( __CLASS__, 'handle_variation_category_migration_request' ) );
 		add_action( 'wp_ajax_dolisync_sync_products_reverse', array( __CLASS__, 'handle_product_sync_reverse_request' ) );
 		add_action( 'wp_ajax_dolisync_sync_stock', array( __CLASS__, 'handle_stock_sync_request' ) );
 	}
@@ -198,6 +199,50 @@ class Dolisync_Sync_Handler {
 			wp_send_json_error( array( 'message' => $result['message'] ?? __( 'Error desconocido', 'dolisync' ) ) );
 		} catch ( Exception $e ) {
 			wp_send_json_error( array( 'message' => __( 'Error durante la sincronización de categorías: ', 'dolisync' ) . $e->getMessage() ) );
+		}
+	}
+
+	/**
+	 * Propaga a los hijos de Dolibarr las categorías de sus productos padre.
+	 */
+	public static function handle_variation_category_migration_request() {
+		self::start_operation_context( 'variation-categories' );
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_send_json_error( array( 'message' => __( 'Permisos insuficientes', 'dolisync' ) ), 403 );
+		}
+
+		$nonce = isset( $_POST['nonce'] ) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
+		if ( ! wp_verify_nonce( $nonce, DOLISYNC_NONCE_ACTION ) ) {
+			wp_send_json_error( array( 'message' => __( 'Error de validación de seguridad', 'dolisync' ) ), 403 );
+		}
+
+		$offset = isset( $_POST['offset'] ) ? max( 0, absint( wp_unslash( $_POST['offset'] ) ) ) : 0;
+		$run_id = isset( $_POST['run_id'] ) ? sanitize_text_field( wp_unslash( $_POST['run_id'] ) ) : '';
+		$lock = 'products_catalog';
+		$run_id = self::reserve_paged_lock( $lock, 0 === $offset, $run_id );
+		if ( '' === $run_id ) {
+			wp_send_json_error( array( 'message' => __( 'Ya hay una sincronización del catálogo en curso. Espera a que finalice antes de reparar las categorías.', 'dolisync' ) ), 409 );
+		}
+
+		try {
+			require_once DOLISYNC_PLUGIN_DIR . 'includes/sync/products/class-dolisync-product-sync-reverse.php';
+			$per_page = isset( $_POST['per_page'] ) ? max( 1, min( 100, absint( wp_unslash( $_POST['per_page'] ) ) ) ) : 25;
+			$result = ( new Dolisync_Product_Sync_Reverse() )->migrate_variation_categories( $offset, $per_page );
+			$pagination = $result['pagination'] ?? array();
+
+			if ( ! empty( $result['success'] ) ) {
+				if ( empty( $pagination['has_more'] ) ) {
+					self::release_paged_lock( $lock, $run_id );
+				}
+				wp_send_json_success( array( 'message' => $result['message'], 'stats' => $result['stats'], 'pagination' => $pagination, 'run_id' => $run_id ) );
+			}
+
+			self::release_paged_lock( $lock, $run_id );
+			wp_send_json_error( array( 'message' => $result['message'] ?? __( 'Error desconocido', 'dolisync' ) ) );
+		} catch ( Throwable $e ) {
+			self::release_paged_lock( $lock, $run_id );
+			self::log_system_error( 'categorias_variantes', $e );
+			wp_send_json_error( array( 'message' => __( 'Error durante la reparación de categorías de variantes: ', 'dolisync' ) . $e->getMessage() ) );
 		}
 	}
 

@@ -5,6 +5,18 @@ Todos los cambios relevantes de DoliSync se documentan en este archivo.
 El formato está basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/)
 y el proyecto utiliza [versionado semántico](https://semver.org/lang/es/).
 
+## [1.0.1] - 2026-09-07
+
+### Añadido
+
+- Asistente paginado para propagar a las variantes ya sincronizadas las categorías
+  asignadas a sus productos padre y hacerlas visibles en TakePOS.
+
+### Corregido
+
+- Las nuevas variantes de Dolibarr reciben explícitamente las categorías del
+  producto padre, ya que Dolibarr no las hereda al crear la combinación.
+
 ## [1.0.0] - 2026-08-07
 
 ### Añadido
@@ -93,5 +105,6 @@ y el proyecto utiliza [versionado semántico](https://semver.org/lang/es/).
 - Cifrado de credenciales, controles de permisos y saneamiento de registros.
 - Compatibilidad con WooCommerce HPOS y soporte opcional para Cloudflare Access.
 
+[1.0.1]: https://github.com/luiscaro6/DoliSync/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/luiscaro6/DoliSync/compare/v1.0.0-rc1...v1.0.0
 [1.0.0-rc1]: https://github.com/luiscaro6/DoliSync/releases/tag/v1.0.0-rc1

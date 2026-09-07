@@ -441,30 +441,80 @@ class Dolisync_Product_Sync_Reverse {
 		return function_exists( 'wc_get_dimension' ) ? (float) wc_get_dimension( (float) $dimension, 'm' ) : (float) $dimension;
 	}
 
-	private function sync_dolibarr_product_categories( $dolibarr_product_id, $categories ) {
+	private function sync_dolibarr_product_categories( $dolibarr_product_id, $categories, $remove_extra_categories = true ) {
 		$dolibarr_product_id = (int) $dolibarr_product_id;
 		if ( $dolibarr_product_id <= 0 || ! is_array( $categories ) ) {
-			return;
+			return array( 'resolved' => 0, 'added' => 0, 'removed' => 0, 'unchanged' => 0, 'skipped' => true );
 		}
 
 		$resolved_category_ids = $this->resolve_dolibarr_category_ids_from_wc_categories( $categories );
 		if ( empty( $resolved_category_ids ) ) {
 			Dolisync_Action_Logger::log_action( 'producto', 'categorias_dolibarr', 'finalizado', sprintf( __( 'Producto Dolibarr %d sin categorías mapeadas desde WooCommerce.', 'dolisync' ), $dolibarr_product_id ), get_current_user_id() );
-			return;
+			return array( 'resolved' => 0, 'added' => 0, 'removed' => 0, 'unchanged' => 0, 'skipped' => true );
+		}
+
+		return $this->sync_dolibarr_product_category_ids( $dolibarr_product_id, $resolved_category_ids, $remove_extra_categories );
+	}
+
+	/**
+	 * Asigna categorías de Dolibarr a un producto.
+	 *
+	 * En productos padre se mantiene una réplica exacta de WooCommerce. En los
+	 * hijos solo se añaden las categorías heredadas, sin borrar categorías extra
+	 * que un usuario haya podido asignar manualmente en Dolibarr.
+	 */
+	private function sync_dolibarr_product_category_ids( $dolibarr_product_id, $resolved_category_ids, $remove_extra_categories = true ) {
+		$dolibarr_product_id = (int) $dolibarr_product_id;
+		$resolved_category_ids = array_values(
+			array_unique(
+				array_filter(
+					array_map( 'intval', (array) $resolved_category_ids ),
+					static function ( $category_id ) { return $category_id > 0; }
+				)
+			)
+		);
+		if ( $dolibarr_product_id <= 0 || empty( $resolved_category_ids ) ) {
+			return array( 'resolved' => count( $resolved_category_ids ), 'added' => 0, 'removed' => 0, 'unchanged' => 0, 'skipped' => true );
 		}
 
 		$current_categories = $this->fetch_dolibarr_product_categories_for_product( $dolibarr_product_id );
-		$current_category_ids = array_map( 'intval', wp_list_pluck( $current_categories, 'id' ) );
-		$to_remove = array_diff( $current_category_ids, $resolved_category_ids );
+		$current_category_ids = $this->extract_dolibarr_category_ids( $current_categories );
+		$to_remove = $remove_extra_categories ? array_diff( $current_category_ids, $resolved_category_ids ) : array();
 		$to_add = array_diff( $resolved_category_ids, $current_category_ids );
 
 		foreach ( $to_remove as $category_id ) {
-			$this->api_client->delete( '/categories/' . (int) $category_id . '/objects/product/' . $dolibarr_product_id );
+			$response = $this->api_client->delete( '/categories/' . (int) $category_id . '/objects/product/' . $dolibarr_product_id );
+			if ( empty( $response['success'] ) ) {
+				throw new RuntimeException( $this->get_api_response_error( $response, sprintf( __( 'No se pudo retirar la categoría %1$d del producto Dolibarr %2$d.', 'dolisync' ), (int) $category_id, $dolibarr_product_id ) ) );
+			}
 		}
 
 		foreach ( $to_add as $category_id ) {
-			$this->api_client->post( '/categories/' . (int) $category_id . '/objects/product/' . $dolibarr_product_id );
+			$response = $this->api_client->post( '/categories/' . (int) $category_id . '/objects/product/' . $dolibarr_product_id );
+			if ( empty( $response['success'] ) ) {
+				throw new RuntimeException( $this->get_api_response_error( $response, sprintf( __( 'No se pudo asignar la categoría %1$d al producto Dolibarr %2$d.', 'dolisync' ), (int) $category_id, $dolibarr_product_id ) ) );
+			}
 		}
+
+		return array(
+			'resolved' => count( $resolved_category_ids ),
+			'added' => count( $to_add ),
+			'removed' => count( $to_remove ),
+			'unchanged' => count( array_intersect( $resolved_category_ids, $current_category_ids ) ),
+			'skipped' => false,
+		);
+	}
+
+	private function extract_dolibarr_category_ids( $categories ) {
+		$category_ids = array();
+		foreach ( (array) $categories as $category ) {
+			$category = $this->normalize_api_array( $category );
+			$category_id = (int) ( $category['id'] ?? $category['rowid'] ?? 0 );
+			if ( $category_id > 0 ) {
+				$category_ids[] = $category_id;
+			}
+		}
+		return array_values( array_unique( $category_ids ) );
 	}
 
 	private function resolve_dolibarr_category_ids_from_wc_categories( $categories ) {
@@ -495,7 +545,7 @@ class Dolisync_Product_Sync_Reverse {
 	private function fetch_dolibarr_product_categories_for_product( $dolibarr_product_id ) {
 		$response = $this->api_client->get( '/products/' . (int) $dolibarr_product_id . '/categories' );
 		if ( empty( $response['success'] ) ) {
-			return array();
+			throw new RuntimeException( $this->get_api_response_error( $response, sprintf( __( 'No se pudieron consultar las categorías del producto Dolibarr %d.', 'dolisync' ), (int) $dolibarr_product_id ) ) );
 		}
 
 		$data = $response['data'] ?? array();
@@ -507,7 +557,126 @@ class Dolisync_Product_Sync_Reverse {
 			$data = $data['data'];
 		}
 
-		return is_array( $data ) ? $data : array();
+		return $this->normalize_api_list( $data );
+	}
+
+	/**
+	 * Repara por lotes las categorías de variantes ya relacionadas.
+	 *
+	 * Solo se modifican hijos cuya relación se valida contra WooCommerce y contra
+	 * la lista actual de combinaciones del producto padre en Dolibarr.
+	 */
+	public function migrate_variation_categories( $offset = 0, $per_page = self::DEFAULT_PAGE_SIZE ) {
+		global $wpdb;
+		$offset = max( 0, (int) $offset );
+		$per_page = max( 1, min( self::MAX_PAGE_SIZE, (int) $per_page ) );
+		$table = $wpdb->prefix . 'dolisync_product_variation_relations';
+		$where = 'dolibarr_product_id > 0 AND dolibarr_variation_id > 0 AND wc_product_id > 0 AND wc_variation_id > 0';
+		$total = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$table} WHERE {$where}" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT id, dolibarr_product_id, dolibarr_variation_id, wc_product_id, wc_variation_id FROM {$table} WHERE {$where} ORDER BY id ASC LIMIT %d OFFSET %d",
+				$per_page,
+				$offset
+			),
+			ARRAY_A
+		); // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+
+		$stats = array(
+			'checked' => 0,
+			'processed' => 0,
+			'updated' => 0,
+			'unchanged' => 0,
+			'skipped' => 0,
+			'errors' => 0,
+			'categories_added' => 0,
+			'details' => array(),
+		);
+		$parent_contexts = array();
+
+		foreach ( (array) $rows as $row ) {
+			$stats['checked']++;
+			$wc_product_id = (int) ( $row['wc_product_id'] ?? 0 );
+			$wc_variation_id = (int) ( $row['wc_variation_id'] ?? 0 );
+			$dolibarr_product_id = (int) ( $row['dolibarr_product_id'] ?? 0 );
+			$dolibarr_variation_id = (int) ( $row['dolibarr_variation_id'] ?? 0 );
+
+			try {
+				$wc_variation = wc_get_product( $wc_variation_id );
+				if ( ! $wc_variation || ! method_exists( $wc_variation, 'is_type' ) || ! $wc_variation->is_type( 'variation' ) || ! method_exists( $wc_variation, 'get_parent_id' ) || $wc_product_id !== (int) $wc_variation->get_parent_id() ) {
+					$stats['skipped']++;
+					$stats['details'][] = array( 'wc_variation_id' => $wc_variation_id, 'dolibarr_variation_id' => $dolibarr_variation_id, 'status' => 'skipped', 'message' => __( 'La relación ya no corresponde a una variante válida de su producto padre en WooCommerce.', 'dolisync' ) );
+					continue;
+				}
+
+				$context_key = $wc_product_id . ':' . $dolibarr_product_id;
+				if ( ! isset( $parent_contexts[ $context_key ] ) ) {
+					$wc_product = wc_get_product( $wc_product_id );
+					if ( ! $wc_product || ( method_exists( $wc_product, 'is_type' ) && $wc_product->is_type( 'variation' ) ) ) {
+						throw new RuntimeException( __( 'No se encontró el producto padre de WooCommerce.', 'dolisync' ) );
+					}
+					$parent_contexts[ $context_key ] = array(
+						'category_ids' => $this->extract_dolibarr_category_ids( $this->fetch_dolibarr_product_categories_for_product( $dolibarr_product_id ) ),
+						'child_ids' => $this->fetch_dolibarr_variation_child_ids( $dolibarr_product_id ),
+					);
+				}
+
+				$context = $parent_contexts[ $context_key ];
+				if ( ! in_array( $dolibarr_variation_id, $context['child_ids'], true ) ) {
+					$stats['skipped']++;
+					$stats['details'][] = array( 'wc_variation_id' => $wc_variation_id, 'dolibarr_variation_id' => $dolibarr_variation_id, 'status' => 'skipped', 'message' => __( 'El producto hijo ya no pertenece a las combinaciones del padre indicado en Dolibarr.', 'dolisync' ) );
+					continue;
+				}
+
+				$result = $this->sync_dolibarr_product_category_ids( $dolibarr_variation_id, $context['category_ids'], false );
+				if ( ! empty( $result['skipped'] ) ) {
+					$stats['skipped']++;
+					$stats['details'][] = array( 'wc_variation_id' => $wc_variation_id, 'dolibarr_variation_id' => $dolibarr_variation_id, 'status' => 'skipped', 'message' => __( 'El producto padre no tiene categorías asignadas en Dolibarr.', 'dolisync' ) );
+					continue;
+				}
+
+				$stats['processed']++;
+				$stats['categories_added'] += (int) ( $result['added'] ?? 0 );
+				if ( (int) ( $result['added'] ?? 0 ) > 0 ) {
+					$stats['updated']++;
+				} else {
+					$stats['unchanged']++;
+				}
+			} catch ( Throwable $error ) {
+				$stats['errors']++;
+				$stats['details'][] = array( 'wc_variation_id' => $wc_variation_id, 'dolibarr_variation_id' => $dolibarr_variation_id, 'status' => 'error', 'message' => $error->getMessage() );
+			}
+		}
+
+		$next_offset = $offset + count( (array) $rows );
+		$has_more = ! empty( $rows ) && $next_offset < $total;
+		$message = $has_more
+			? sprintf( __( 'Lote procesado: %d variantes comprobadas.', 'dolisync' ), $stats['checked'] )
+			: sprintf( __( 'Reparación completada: %1$d variantes actualizadas y %2$d categorías heredadas añadidas.', 'dolisync' ), $stats['updated'], $stats['categories_added'] );
+
+		return array(
+			'success' => true,
+			'message' => $message,
+			'stats' => $stats,
+			'pagination' => array( 'offset' => $offset, 'next_offset' => $next_offset, 'has_more' => $has_more, 'total' => $total ),
+		);
+	}
+
+	private function fetch_dolibarr_variation_child_ids( $dolibarr_product_id ) {
+		$response = $this->api_client->get( '/products/' . (int) $dolibarr_product_id . '/variants' );
+		if ( empty( $response['success'] ) ) {
+			throw new RuntimeException( $this->get_api_response_error( $response, sprintf( __( 'No se pudieron validar las variantes del producto Dolibarr %d.', 'dolisync' ), (int) $dolibarr_product_id ) ) );
+		}
+
+		$child_ids = array();
+		foreach ( $this->normalize_api_list( $response['data'] ?? array() ) as $combination ) {
+			$combination = $this->normalize_api_array( $combination );
+			$child_id = (int) ( $combination['fk_product_child'] ?? $combination['product_child_id'] ?? 0 );
+			if ( $child_id > 0 ) {
+				$child_ids[] = $child_id;
+			}
+		}
+		return array_values( array_unique( $child_ids ) );
 	}
 
 	private function normalize_wc_variations( $wc_product ) {
@@ -814,6 +983,7 @@ class Dolisync_Product_Sync_Reverse {
 		$table = $wpdb->prefix . 'dolisync_product_variation_relations';
 		$parent_price = is_numeric( $payload['price'] ) ? (float) $payload['price'] : 0.0;
 		$stock_changed = false;
+		$variation_category_ids = $this->extract_dolibarr_category_ids( $this->fetch_dolibarr_product_categories_for_product( $dolibarr_id ) );
 
 		foreach ( (array) $payload['variations'] as $variation ) {
 			$wc_variation_id = (int) ( $variation['id'] ?? 0 );
@@ -921,6 +1091,9 @@ class Dolisync_Product_Sync_Reverse {
 				// (`WC-VAR-*`) durante la siguiente sincronización manual.
 				$child_payload['ref'] = $variation_reference;
 				$variation_product_updated = $this->update_dolibarr_variation_product( $child_id, $child_payload );
+				// TakePOS filtra por categorías de producto. Dolibarr no las hereda al
+				// crear una combinación, por lo que deben asignarse al hijo explícitamente.
+				$this->sync_dolibarr_product_category_ids( $child_id, $variation_category_ids, false );
 				$stock_changed = $this->sync_dolibarr_variation_stock( $child_id, $variation['stock_qty'] ?? null, $price, $wc_variation_id ) || $stock_changed;
 				$this->image_sync->sync_woocommerce_to_dolibarr( $wc_variation_id, $child_id, '' );
 				if ( $variation_product_updated ) {

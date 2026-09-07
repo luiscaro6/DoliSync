@@ -64,5 +64,57 @@
 		const $button = $(this).prop('disabled', true);
 		$.post(DoliSync.ajaxUrl, {action: 'dolisync_sync_product_categories', nonce: DoliSync.nonce, simulation_token: simulationToken, direction: simulationDirection}).done(function (response) { simulationToken = ''; simulationDirection = ''; $('#dolisync-categories-notice').html('<div class="notice ' + (response.success ? 'notice-success' : 'notice-error') + ' inline"><p>' + esc(response.data && response.data.message ? response.data.message : 'Proceso finalizado.') + '</p></div>'); if (response.success) { loadCatalog(); } }).fail(function (xhr) { $('#dolisync-categories-notice').html('<div class="notice notice-error inline"><p>' + esc(dolisyncAjaxError(xhr, 'No se pudo aplicar.')) + '</p></div>'); }).always(function () { $button.prop('disabled', true); });
 	});
+	$app.on('click', '#dolisync-migrate-variation-categories', function () {
+		if (!window.confirm('¿Añadir a las variantes existentes las categorías de sus productos padre?')) { return; }
+		const $button = $(this).prop('disabled', true);
+		const $result = $('#dolisync-variation-category-migration-result');
+		const totals = {checked: 0, processed: 0, updated: 0, unchanged: 0, skipped: 0, errors: 0, categories_added: 0};
+		const details = [];
+		let runId = '';
+
+		function renderProgress(total) {
+			$result.html('<div class="dolisync-products-loading"><span class="spinner is-active"></span>Comprobadas <strong>' + esc(totals.checked) + '</strong> de <strong>' + esc(total || 0) + '</strong> variantes · Categorías añadidas: <strong>' + esc(totals.categories_added) + '</strong></div>');
+		}
+
+		function renderResult() {
+			const noticeClass = totals.errors > 0 || totals.skipped > 0 ? 'notice-warning' : 'notice-success';
+			let html = '<div class="notice ' + noticeClass + ' inline"><p><strong>Reparación completada.</strong> Variantes comprobadas: ' + esc(totals.checked) + ' · actualizadas: ' + esc(totals.updated) + ' · ya correctas: ' + esc(totals.unchanged) + ' · omitidas: ' + esc(totals.skipped) + ' · errores: ' + esc(totals.errors) + ' · categorías añadidas: ' + esc(totals.categories_added) + '.</p></div>';
+			if (details.length) {
+				html += '<table class="dolisync-products-table"><thead><tr><th>Variación WooCommerce</th><th>Producto hijo Dolibarr</th><th>Estado</th><th>Detalle</th></tr></thead><tbody>' + details.slice(0, 100).map(function (item) {
+					return '<tr><td>#' + esc(item.wc_variation_id || 0) + '</td><td>#' + esc(item.dolibarr_variation_id || 0) + '</td><td>' + esc(item.status === 'error' ? 'Error' : 'Omitida') + '</td><td>' + esc(item.message || '') + '</td></tr>';
+				}).join('') + '</tbody></table>';
+				if (details.length > 100) { html += '<p><small>Se muestran las primeras 100 incidencias de ' + esc(details.length) + '.</small></p>'; }
+			}
+			$result.html(html);
+		}
+
+		function runBatch(offset) {
+			$.post(DoliSync.ajaxUrl, {action: 'dolisync_migrate_variation_categories', nonce: DoliSync.nonce, offset: offset, per_page: 25, run_id: runId}).done(function (response) {
+				if (!response.success) {
+					$result.html('<div class="notice notice-error inline"><p>' + esc(response.data && response.data.message ? response.data.message : 'No se pudo reparar las categorías de las variantes.') + '</p></div>');
+					$button.prop('disabled', false);
+					return;
+				}
+				runId = response.data.run_id || runId;
+				const stats = response.data.stats || {};
+				Object.keys(totals).forEach(function (key) { totals[key] += Number(stats[key] || 0); });
+				(stats.details || []).forEach(function (item) { details.push(item); });
+				const pagination = response.data.pagination || {};
+				if (pagination.has_more) {
+					renderProgress(Number(pagination.total || 0));
+					runBatch(Number(pagination.next_offset || 0));
+					return;
+				}
+				renderResult();
+				$button.prop('disabled', false);
+			}).fail(function (xhr) {
+				$result.html('<div class="notice notice-error inline"><p>' + esc(dolisyncAjaxError(xhr, 'No se pudo reparar las categorías de las variantes.')) + '</p></div>');
+				$button.prop('disabled', false);
+			});
+		}
+
+		renderProgress(0);
+		runBatch(0);
+	});
 	loadCatalog();
 })(jQuery);

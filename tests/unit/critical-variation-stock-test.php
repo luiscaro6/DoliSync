@@ -6,6 +6,9 @@
  */
 
 define( 'ABSPATH', __DIR__ );
+if ( ! defined( 'ARRAY_A' ) ) {
+	define( 'ARRAY_A', 'ARRAY_A' );
+}
 
 if ( ! function_exists( 'wp_json_encode' ) ) {
 	function wp_json_encode( $value ) {
@@ -233,5 +236,135 @@ dolisync_test_assert_same(
 dolisync_test_assert_same( true, Dolisync_API_Client::is_duplicate_barcode_error_message( 'The product barcode 040000000020 already exists on another product reference.' ), 'El cliente API debe clasificar el conflicto de barcode como error de validación.' );
 dolisync_test_assert_same( true, Dolisync_API_Client::is_barcode_validation_error_message( 'ErrorBarCodeRequired' ), 'Un barcode obligatorio ausente también es una validación permanente y no debe reintentarse como 500 temporal.' );
 dolisync_test_assert_same( false, Dolisync_API_Client::is_duplicate_barcode_error_message( 'Internal Server Error: database unavailable' ), 'Un 500 real debe seguir siendo reintentable.' );
+
+class Dolisync_Test_Category_API_Client {
+	public $current_categories = array();
+	public $requests = array();
+
+	public function get( $endpoint, $params = array() ) {
+		return array( 'success' => true, 'data' => $this->current_categories );
+	}
+
+	public function post( $endpoint, $payload = array() ) {
+		$this->requests[] = array( 'method' => 'POST', 'endpoint' => $endpoint );
+		return array( 'success' => true );
+	}
+
+	public function delete( $endpoint, $params = array() ) {
+		$this->requests[] = array( 'method' => 'DELETE', 'endpoint' => $endpoint );
+		return array( 'success' => true );
+	}
+}
+
+$category_method = $reverse_reflection->getMethod( 'sync_dolibarr_product_category_ids' );
+$category_client = new Dolisync_Test_Category_API_Client();
+$category_client->current_categories = array( array( 'id' => 10 ), array( 'rowid' => 30 ) );
+$api_client_property->setValue( $reverse_sync, $category_client );
+$category_result = $category_method->invoke( $reverse_sync, 900, array( 10, 20 ), false );
+dolisync_test_assert_same(
+	array( array( 'method' => 'POST', 'endpoint' => '/categories/20/objects/product/900' ) ),
+	$category_client->requests,
+	'La herencia de categorías debe añadir las categorías del padre sin retirar categorías manuales del hijo.'
+);
+dolisync_test_assert_same( 1, $category_result['added'], 'Debe informar de la categoría heredada añadida a la variante.' );
+dolisync_test_assert_same( 0, $category_result['removed'], 'La migración de variantes no debe eliminar categorías adicionales.' );
+dolisync_test_assert_same( 1, $category_result['unchanged'], 'Debe reconocer las categorías que el hijo ya tenía asignadas.' );
+
+$exact_category_client = new Dolisync_Test_Category_API_Client();
+$exact_category_client->current_categories = array( array( 'id' => 10 ), array( 'id' => 30 ) );
+$api_client_property->setValue( $reverse_sync, $exact_category_client );
+$category_method->invoke( $reverse_sync, 901, array( 10, 20 ), true );
+dolisync_test_assert_same(
+	array(
+		array( 'method' => 'DELETE', 'endpoint' => '/categories/30/objects/product/901' ),
+		array( 'method' => 'POST', 'endpoint' => '/categories/20/objects/product/901' ),
+	),
+	$exact_category_client->requests,
+	'La sincronización del producto padre debe seguir manteniendo una réplica exacta de sus categorías.'
+);
+
+class Dolisync_Test_WC_Product_For_Category_Migration {
+	private $type;
+	private $parent_id;
+
+	public function __construct( $type, $parent_id = 0 ) {
+		$this->type = $type;
+		$this->parent_id = $parent_id;
+	}
+
+	public function is_type( $type ) {
+		return $this->type === $type;
+	}
+
+	public function get_parent_id() {
+		return $this->parent_id;
+	}
+}
+
+$dolisync_test_wc_products = array(
+	100 => new Dolisync_Test_WC_Product_For_Category_Migration( 'variable' ),
+	317 => new Dolisync_Test_WC_Product_For_Category_Migration( 'variation', 100 ),
+);
+if ( ! function_exists( 'wc_get_product' ) ) {
+	function wc_get_product( $product_id ) {
+		global $dolisync_test_wc_products;
+		return $dolisync_test_wc_products[ (int) $product_id ] ?? false;
+	}
+}
+
+class Dolisync_Test_Category_Migration_DB {
+	public $prefix = 'wp_';
+
+	public function get_var( $query ) {
+		return 1;
+	}
+
+	public function prepare( $query, ...$values ) {
+		foreach ( $values as $value ) {
+			$query = preg_replace( '/%d/', (string) (int) $value, $query, 1 );
+		}
+		return $query;
+	}
+
+	public function get_results( $query, $format ) {
+		return array(
+			array(
+				'id' => 1,
+				'dolibarr_product_id' => 500,
+				'dolibarr_variation_id' => 900,
+				'wc_product_id' => 100,
+				'wc_variation_id' => 317,
+			),
+		);
+	}
+}
+
+class Dolisync_Test_Category_Migration_API_Client extends Dolisync_Test_Category_API_Client {
+	public function get( $endpoint, $params = array() ) {
+		if ( '/products/500/categories' === $endpoint ) {
+			return array( 'success' => true, 'data' => array( array( 'id' => 10 ), array( 'id' => 20 ) ) );
+		}
+		if ( '/products/500/variants' === $endpoint ) {
+			return array( 'success' => true, 'data' => array( array( 'id' => 41, 'fk_product_child' => 900 ) ) );
+		}
+		if ( '/products/900/categories' === $endpoint ) {
+			return array( 'success' => true, 'data' => array( array( 'id' => 10 ), array( 'id' => 30 ) ) );
+		}
+		return array( 'success' => false, 'message' => 'Endpoint inesperado: ' . $endpoint );
+	}
+}
+
+$wpdb = new Dolisync_Test_Category_Migration_DB();
+$migration_client = new Dolisync_Test_Category_Migration_API_Client();
+$api_client_property->setValue( $reverse_sync, $migration_client );
+$migration_result = $reverse_sync->migrate_variation_categories( 0, 25 );
+dolisync_test_assert_same( true, $migration_result['success'], 'El asistente debe completar el lote de relaciones de variantes.' );
+dolisync_test_assert_same( 1, $migration_result['stats']['updated'], 'El asistente debe marcar la variante cuando añade categorías heredadas.' );
+dolisync_test_assert_same( 1, $migration_result['stats']['categories_added'], 'El asistente debe contabilizar únicamente las categorías que faltaban.' );
+dolisync_test_assert_same(
+	array( array( 'method' => 'POST', 'endpoint' => '/categories/20/objects/product/900' ) ),
+	$migration_client->requests,
+	'El asistente debe copiar las categorías actuales del padre Dolibarr y conservar las categorías extra del hijo.'
+);
 
 echo "Critical variation and stock regression tests passed.\n";
