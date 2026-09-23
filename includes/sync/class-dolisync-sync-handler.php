@@ -153,6 +153,8 @@ class Dolisync_Sync_Handler {
 			if ( ! empty( $result['success'] ) ) {
 				if ( empty( $result['pagination']['has_more'] ) ) {
 					self::release_paged_lock( $lock, $run_id );
+					require_once DOLISYNC_PLUGIN_DIR . 'includes/cache/class-dolisync-product-catalog-cache.php';
+					Dolisync_Product_Catalog_Cache::request_refresh( true );
 				}
 				wp_send_json_success( array( 'message' => $result['message'], 'stats' => $result['stats'], 'pagination' => $result['pagination'] ?? array(), 'run_id' => $run_id ) );
 			}
@@ -276,6 +278,8 @@ class Dolisync_Sync_Handler {
 			if ( ! empty( $result['success'] ) ) {
 				if ( empty( $result['pagination']['has_more'] ) ) {
 					self::release_paged_lock( $lock, $run_id );
+					require_once DOLISYNC_PLUGIN_DIR . 'includes/cache/class-dolisync-product-catalog-cache.php';
+					Dolisync_Product_Catalog_Cache::request_refresh( true );
 				}
 				wp_send_json_success( array( 'message' => $result['message'], 'stats' => $result['stats'], 'pagination' => $result['pagination'] ?? array(), 'run_id' => $run_id ) );
 			}

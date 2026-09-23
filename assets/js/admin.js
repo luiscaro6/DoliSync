@@ -637,6 +637,8 @@ function dolisyncInitProductsCatalog() {
 	let filteredRows = [];
 	let page = 1;
 	let pageSize = 20;
+	let cachePollTimer = null;
+	let cacheReady = false;
 
 	const esc = (value) => dolisyncEscapeHtml(value === null || typeof value === 'undefined' ? '' : String(value));
 	const money = (value) => value === '' || value === null || typeof value === 'undefined' ? '—' : esc(value);
@@ -687,8 +689,8 @@ function dolisyncInitProductsCatalog() {
 		const dolibarrId = row.dolibarr ? row.dolibarr.id : 0;
 		return '<div class="dolisync-row-actions" data-wc-id="' + wcId + '" data-dolibarr-id="' + dolibarrId + '">' +
 			'<button class="button dolisync-product-action" data-operation="refresh" ' + (!dolibarrId || row.ignored ? 'disabled' : '') + ' title="Obtener de nuevo este producto de Dolibarr"><span class="dashicons dashicons-update"></span><span>Refrescar</span></button>' +
-			'<button class="button dolisync-product-action" data-operation="woo_to_dolibarr" ' + (!wcId || row.ignored ? 'disabled' : '') + ' title="Sincronizar WooCommerce a Dolibarr"><span class="dashicons dashicons-arrow-right-alt"></span><span>Woo → Doli</span></button>' +
-			'<button class="button dolisync-product-action" data-operation="dolibarr_to_woo" ' + (!dolibarrId || row.ignored ? 'disabled' : '') + ' title="Sincronizar Dolibarr a WooCommerce"><span class="dashicons dashicons-arrow-left-alt"></span><span>Doli → Woo</span></button>' +
+			'<button class="button dolisync-product-action" data-operation="woo_to_dolibarr" ' + (!cacheReady || !wcId || row.ignored ? 'disabled' : '') + ' title="Sincronizar WooCommerce a Dolibarr"><span class="dashicons dashicons-arrow-right-alt"></span><span>Woo → Doli</span></button>' +
+			'<button class="button dolisync-product-action" data-operation="dolibarr_to_woo" ' + (!cacheReady || !dolibarrId || row.ignored ? 'disabled' : '') + ' title="Sincronizar Dolibarr a WooCommerce"><span class="dashicons dashicons-arrow-left-alt"></span><span>Doli → Woo</span></button>' +
 			'<button class="button dolisync-product-action" data-operation="' + (row.ignored ? 'restore' : 'ignore') + '"><span class="dashicons ' + (row.ignored ? 'dashicons-undo' : 'dashicons-hidden') + '"></span><span>' + (row.ignored ? 'Restaurar' : 'Omitir') + '</span></button></div>';
 	}
 
@@ -723,20 +725,100 @@ function dolisyncInitProductsCatalog() {
 		render();
 	}
 
-	function loadCatalog(showNotice) {
-		jQuery('#dolisync-products-table').html('<div class="dolisync-products-loading"><span class="spinner is-active"></span>Leyendo ambos catálogos…</div>');
-		jQuery.post(DoliSync.ajaxUrl, {action: 'dolisync_products_catalog', nonce: DoliSync.nonce}).done(function (response) {
+	function renderCacheNotice(cache, showNotice) {
+		cache = cache || {};
+		const ready = Boolean(cache.completed_at);
+		const warnings = Number(cache.warning_count || 0);
+		let message = '';
+		let noticeClass = 'info';
+		let progress = '';
+		if (cache.stage === 'woocommerce') {
+			progress = ' Procesando WooCommerce, lote ' + Math.max(1, Number(cache.page || 1)) + '.';
+		} else if (cache.stage === 'dolibarr_list') {
+			progress = ' Leyendo el listado de Dolibarr, lote ' + (Number(cache.page || 0) + 1) + '.';
+		} else if (cache.stage === 'dolibarr_details') {
+			progress = ' Incorporando variaciones de Dolibarr' + (cache.detail_cursor ? ' después del producto #' + cache.detail_cursor : '') + '.';
+		}
+		if (!ready) {
+			message = 'Preparando la primera caché. Las acciones de sincronización permanecerán bloqueadas hasta tener ambos catálogos completos.' + progress;
+		} else if (cache.running) {
+			message = 'Catálogo servido desde caché. La actualización incremental continúa en segundo plano.' + progress;
+		} else if (warnings > 0) {
+			noticeClass = 'warning';
+			message = 'La caché está disponible y la primera carga ha terminado con ' + warnings + (warnings === 1 ? ' aviso recuperable.' : ' avisos recuperables.');
+		} else if (showNotice) {
+			noticeClass = 'success';
+			message = 'Catálogo cargado desde caché.';
+		}
+		if (cache.last_error) {
+			noticeClass = 'warning';
+			message += ' Último error: ' + cache.last_error;
+		} else if (cache.last_warning && warnings > 0) {
+			noticeClass = 'warning';
+			message += ' Último aviso: ' + cache.last_warning;
+		}
+		if (cache.paused_reason === 'remote_sync') {
+			message += ' En pausa mientras termina otra sincronización de productos o stock.';
+		} else if (Number(cache.retry_after || 0) > Math.floor(Date.now() / 1000)) {
+			message += ' Se reintentará automáticamente tras el error temporal.';
+		} else if (cache.worker_locked) {
+			message += ' Hay otro lote ejecutándose ahora mismo.';
+		}
+		if (cache.wp_cron_disabled && cache.running) {
+			message += ' WP-Cron está desactivado; este panel está ejecutando los lotes de respaldo.';
+		}
+		jQuery('#dolisync-products-notice').html(message ? '<div class="notice notice-' + noticeClass + ' inline"><p>' + esc(message) + '</p></div>' : '');
+	}
+
+	function scheduleCachePoll() {
+		if (cachePollTimer) {
+			window.clearTimeout(cachePollTimer);
+		}
+		cachePollTimer = window.setTimeout(function () {
+			cachePollTimer = null;
+			jQuery.post(DoliSync.ajaxUrl, {action: 'dolisync_products_cache_status', nonce: DoliSync.nonce}).done(function (response) {
+				if (!response.success) {
+					scheduleCachePoll();
+					return;
+				}
+				const cache = response.data.cache || {};
+				cacheReady = Boolean(cache.completed_at);
+				renderCacheNotice(cache, false);
+				if (cache.running) {
+					scheduleCachePoll();
+				} else {
+					// Recargamos las filas una sola vez cuando finaliza la generación.
+					loadCatalog(false, true);
+				}
+			}).fail(function () {
+				scheduleCachePoll();
+			});
+		}, 5000);
+	}
+
+	function loadCatalog(showNotice, backgroundPoll) {
+		if (!backgroundPoll && cachePollTimer) {
+			window.clearTimeout(cachePollTimer);
+			cachePollTimer = null;
+		}
+		if (!backgroundPoll) {
+			jQuery('#dolisync-products-table').html('<div class="dolisync-products-loading"><span class="spinner is-active"></span>Leyendo ambos catálogos…</div>');
+		}
+		jQuery.post(DoliSync.ajaxUrl, {action: 'dolisync_products_catalog', nonce: DoliSync.nonce, refresh: showNotice ? 1 : 0}).done(function (response) {
 			if (!response.success) {
 				jQuery('#dolisync-products-table').html('<div class="dolisync-products-zero"><span class="dashicons dashicons-warning"></span><h2>No se pudo cargar el catálogo</h2><p>' + esc(response.data && response.data.message ? response.data.message : 'Comprueba la conexión con Dolibarr.') + '</p></div>');
 				return;
 			}
 			rows = response.data.rows || [];
 			pageSize = response.data.page_size || 20;
+			const cache = response.data.cache || {};
+			cacheReady = Boolean(cache.completed_at);
 			const summary = response.data.summary || {};
 			jQuery('#dolisync-products-summary').html('<span><strong>' + (summary.total || 0) + '</strong> filas</span><span class="is-ok"><strong>' + (summary.matching || 0) + '</strong> coinciden</span><span><strong>' + (summary.unmatched || 0) + '</strong> sin pareja</span><span><strong>' + (summary.ignored || 0) + '</strong> omitidos</span>');
 			applySearch();
-			if (showNotice) {
-				jQuery('#dolisync-products-notice').html('<div class="notice notice-success inline"><p>Catálogo actualizado.</p></div>');
+			renderCacheNotice(cache, showNotice);
+			if (cache.running) {
+				scheduleCachePoll();
 			}
 		}).fail(function (xhr) {
 			jQuery('#dolisync-products-table').html('<div class="dolisync-products-zero"><span class="dashicons dashicons-warning"></span><h2>No se pudo cargar el catálogo</h2><p>' + dolisyncAjaxError(xhr, 'Comprueba la conexión con Dolibarr.') + '</p></div>');
@@ -770,8 +852,9 @@ function dolisyncInitProductsCatalog() {
 			jQuery('#dolisync-products-notice').html('<div class="notice notice-error inline"><p>' + dolisyncAjaxError(xhr, 'No se pudo completar la acción.') + '</p></div>');
 		}).always(function () {
 			$button.removeClass('is-busy');
-			$actions.find('[data-operation="refresh"], [data-operation="dolibarr_to_woo"]').prop('disabled', !$actions.data('dolibarr-id'));
-			$actions.find('[data-operation="woo_to_dolibarr"]').prop('disabled', !$actions.data('wc-id'));
+			$actions.find('[data-operation="refresh"]').prop('disabled', !$actions.data('dolibarr-id'));
+			$actions.find('[data-operation="dolibarr_to_woo"]').prop('disabled', !cacheReady || !$actions.data('dolibarr-id'));
+			$actions.find('[data-operation="woo_to_dolibarr"]').prop('disabled', !cacheReady || !$actions.data('wc-id'));
 			$actions.find('[data-operation="ignore"], [data-operation="restore"]').prop('disabled', false);
 		});
 	});
@@ -1227,13 +1310,20 @@ function dolisyncSimulationContext($panel) {
 	return {resource: String($tab.data('simulation-resource') || ''), direction: String($tab.data('simulation-direction') || '')};
 }
 
-function dolisyncRenderSimulation($panel, items, summary) {
+function dolisyncRenderSimulation($panel, items, summary, cache) {
 	const esc = function (value) { return jQuery('<div>').text(value == null ? '' : value).html(); };
+	cache = cache || {};
+	const skippedIncomplete = Number(summary.skipped_incomplete || 0);
 	$panel.data('simulation-items', items);
-	$panel.find('.dolisync-simulation-summary').html('<span><strong>' + (summary.total || 0) + '</strong> cambios</span><span><strong>' + (summary.create || 0) + '</strong> altas</span><span><strong>' + (summary.update || 0) + '</strong> actualizaciones</span>');
+	$panel.find('.dolisync-simulation-summary').html('<span><strong>' + (summary.total || 0) + '</strong> cambios</span><span><strong>' + (summary.create || 0) + '</strong> altas</span><span><strong>' + (summary.update || 0) + '</strong> actualizaciones</span>' + (skippedIncomplete ? '<span><strong>' + skippedIncomplete + '</strong> pendientes de caché</span>' : ''));
 	$panel.find('.dolisync-apply-all-simulation').prop('disabled', !items.length);
+	if (skippedIncomplete) {
+		$panel.find('.dolisync-simulation-notice').html('<div class="notice notice-warning inline"><p>Se han excluido ' + skippedIncomplete + ' productos variables cuyo detalle de caché está incompleto, para evitar proponer cambios incorrectos.</p></div>');
+	} else if (cache.running) {
+		$panel.find('.dolisync-simulation-notice').html('<div class="notice notice-info inline"><p>Resultado calculado con la caché disponible. La actualización incremental continúa en segundo plano.</p></div>');
+	}
 	if (!items.length) {
-		$panel.find('.dolisync-simulation-table').html('<div class="dolisync-products-zero"><span class="dashicons dashicons-yes-alt"></span><h2>Todo está actualizado</h2><p>No se han detectado cambios para esta dirección.</p></div>');
+		$panel.find('.dolisync-simulation-table').html(skippedIncomplete ? '<div class="dolisync-products-zero"><span class="dashicons dashicons-warning"></span><h2>No hay cambios verificables</h2><p>Vuelve a simular cuando la caché complete los productos indicados.</p></div>' : '<div class="dolisync-products-zero"><span class="dashicons dashicons-yes-alt"></span><h2>Todo está actualizado</h2><p>No se han detectado cambios para esta dirección.</p></div>');
 		return;
 	}
 	$panel.find('.dolisync-simulation-table').html('<table class="dolisync-products-table dolisync-simulation-results"><thead><tr><th>Elemento</th><th>Operación</th><th>Cambios previstos</th><th>Acción</th></tr></thead><tbody>' + items.map(function (item, index) {
@@ -1250,7 +1340,7 @@ jQuery(document).on('click', '.dolisync-run-simulation', function () {
 	$panel.find('.dolisync-simulation-table').html('<div class="dolisync-products-loading"><span class="spinner is-active"></span>Calculando cambios…</div>');
 	jQuery.post(DoliSync.ajaxUrl, {action: action, nonce: DoliSync.nonce, direction: context.direction}).done(function (response) {
 		if (!response.success) { $panel.find('.dolisync-simulation-table').html('<div class="notice notice-error inline"><p>' + (response.data && response.data.message ? response.data.message : 'No se pudo simular.') + '</p></div>'); return; }
-		dolisyncRenderSimulation($panel, response.data.items || [], response.data.summary || {});
+		dolisyncRenderSimulation($panel, response.data.items || [], response.data.summary || {}, response.data.cache || {});
 	}).fail(function (xhr) {
 		$panel.find('.dolisync-simulation-table').html('<div class="notice notice-error inline"><p>' + dolisyncAjaxError(xhr, 'No se pudo simular.') + '</p></div>');
 	}).always(function () { $button.prop('disabled', false).removeClass('is-busy'); });

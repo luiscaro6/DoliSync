@@ -14,7 +14,7 @@ foreach ( array( 'dolisync_logs_cache', 'dolisync_config_cache', 'dolisync_admin
 	delete_transient( $transient );
 }
 
-foreach ( array( 'dolisync_hourly_sync', 'dolisync_cleanup_logs', 'dolisync_connection_autocheck', 'dolisync_product_autosync', 'dolisync_stock_autosync', 'dolisync_stock_autosync_batch', 'dolisync_retry_invoice_delivery', 'dolisync_retry_invoice_email', 'dolisync_process_order_queue' ) as $hook ) {
+foreach ( array( 'dolisync_hourly_sync', 'dolisync_cleanup_logs', 'dolisync_connection_autocheck', 'dolisync_product_autosync', 'dolisync_stock_autosync', 'dolisync_stock_autosync_batch', 'dolisync_catalog_cache_refresh', 'dolisync_catalog_cache_batch', 'dolisync_retry_invoice_delivery', 'dolisync_retry_invoice_email', 'dolisync_process_order_queue' ) as $hook ) {
 	wp_clear_scheduled_hook( $hook );
 	if ( function_exists( 'as_unschedule_all_actions' ) ) {
 		as_unschedule_all_actions( $hook, array(), 'dolisync' );
@@ -90,6 +90,7 @@ $tables = array(
 	// Tabla conservada en instalaciones anteriores a la migración de categorías.
 	$wpdb->prefix . 'dolisync_product_category_relations',
 	$wpdb->prefix . 'dolisync_product_variation_relations',
+	$wpdb->prefix . 'dolisync_product_catalog_cache',
 );
 
 foreach ( $tables as $table ) {
@@ -110,6 +111,9 @@ $options = array(
 	'dolisync_onboarding_complete',
 	'dolisync_onboarding_pending',
 	'dolisync_cf_access_enabled',
+	'dolisync_catalog_cache_state',
+	'dolisync_catalog_cache_status',
+	'dolisync_catalog_cache_lock',
 );
 
 foreach ( $options as $option ) {

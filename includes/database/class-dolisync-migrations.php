@@ -6,7 +6,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 class Dolisync_Migrations {
-	public const DB_VERSION = '2.0.0';
+	public const DB_VERSION = '2.1.0';
 	private const OPTION = 'dolisync_db_version';
 
 	/** Ejecuta las migraciones pendientes una sola vez por versión. */

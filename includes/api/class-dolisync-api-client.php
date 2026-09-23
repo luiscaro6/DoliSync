@@ -62,6 +62,11 @@ class Dolisync_API_Client {
 		return $this->request( $endpoint, 'GET', null, $params );
 	}
 
+	/** Lectura acotada para trabajadores incrementales y peticiones AJAX de apoyo. */
+	public function get_for_cache( $endpoint, $params = array() ) {
+		return $this->request( $endpoint, 'GET', null, $params, array( 'timeout' => 15, 'max_retries' => 1 ) );
+	}
+
 	public function post( $endpoint, $data = array(), $params = array() ) {
 		return $this->request( $endpoint, 'POST', $data, $params );
 	}
@@ -89,9 +94,11 @@ class Dolisync_API_Client {
 		return $result;
 	}
 
-	private function request( $endpoint, $method = 'GET', $data = null, $params = array() ) {
+	private function request( $endpoint, $method = 'GET', $data = null, $params = array(), $options = array() ) {
 		$method = strtoupper( (string) $method );
 		$endpoint = $this->normalize_endpoint( $endpoint );
+		$timeout = min( self::REQUEST_TIMEOUT, max( 1, (int) ( $options['timeout'] ?? self::REQUEST_TIMEOUT ) ) );
+		$max_retries = min( self::MAX_RETRIES, max( 1, (int) ( $options['max_retries'] ?? self::MAX_RETRIES ) ) );
 		$config_error = $this->validate_configuration();
 		if ( '' !== $config_error ) {
 			return array( 'success' => false, 'code' => 'configuration_error', 'message' => $config_error, 'http_code' => null, 'data' => null, 'time_ms' => 0 );
@@ -166,7 +173,7 @@ class Dolisync_API_Client {
 		$last_response_body = null;
 		$time_ms = 0;
 
-		for ( $attempt = 1; $attempt <= self::MAX_RETRIES; $attempt++ ) {
+		for ( $attempt = 1; $attempt <= $max_retries; $attempt++ ) {
 			$start = microtime( true );
 			$response = wp_remote_request(
 				$url,
@@ -174,7 +181,7 @@ class Dolisync_API_Client {
 					'method'     => $method,
 					'headers'    => $headers,
 					'body'       => $body,
-					'timeout'    => self::REQUEST_TIMEOUT,
+					'timeout'    => $timeout,
 					'sslverify'  => true,
 					'user-agent' => 'DoliSync/1.0',
 					'limit_response_size' => self::MAX_RESPONSE_BYTES,
@@ -184,7 +191,7 @@ class Dolisync_API_Client {
 
 			if ( is_wp_error( $response ) ) {
 				$last_error = $response->get_error_message();
-				if ( $this->can_retry_method( $method ) && $attempt < self::MAX_RETRIES ) {
+				if ( $this->can_retry_method( $method ) && $attempt < $max_retries ) {
 					sleep( self::RETRY_DELAY * ( 2 ** ( $attempt - 1 ) ) );
 					continue;
 				}
@@ -266,13 +273,13 @@ class Dolisync_API_Client {
 					$log_message = $api_message;
 				}
 
-				if ( ! $permanent_barcode_error && $this->can_retry_http_response( $method, $last_http_code ) && $attempt < self::MAX_RETRIES ) {
+				if ( ! $permanent_barcode_error && $this->can_retry_http_response( $method, $last_http_code ) && $attempt < $max_retries ) {
 					$retry_delay = $this->get_retry_delay( $response, $attempt );
 					$retry_message = sprintf(
 						__( '%1$s Reintento %2$d de %3$d en %4$d segundos.', 'dolisync' ),
 						$log_message,
 						$attempt + 1,
-						self::MAX_RETRIES,
+						$max_retries,
 						$retry_delay
 					);
 					$this->logger->log( 'WARNING', $endpoint, $method, $request_payload, $this->sanitize_for_log( $decoded ), $last_http_code, $time_ms, $retry_message, $origin, $executor, $cron_interval );

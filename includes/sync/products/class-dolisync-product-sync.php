@@ -133,8 +133,12 @@ class Dolisync_Product_Sync {
 		}
 
 		$product = $this->normalize_api_array( $response['data'] ?? array() );
+		if ( isset( $product['data'] ) && is_array( $product['data'] ) ) {
+			$product = $product['data'];
+		}
 		$product['categories'] = $this->fetch_dolibarr_categories_for_product( $dolibarr_product_id );
 		$product['variants'] = $this->fetch_dolibarr_variants( $dolibarr_product_id );
+		$this->assert_variations_are_safe( $dolibarr_product_id, $product['variants'] );
 		$this->process_product( $product );
 
 		return array(
@@ -881,6 +885,7 @@ class Dolisync_Product_Sync {
 				$product['categories'] = $this->fetch_dolibarr_categories_for_product( $product_id );
 				if ( 2 === $variant_filter ) {
 					$product['variants'] = $this->fetch_dolibarr_variants( $product_id );
+					$this->assert_variations_are_safe( $product_id, $product['variants'], true );
 				}
 				$products[] = $product;
 			}
@@ -1082,6 +1087,35 @@ class Dolisync_Product_Sync {
 		return is_array( $data ) ? $data : array();
 	}
 
+	/**
+	 * Normaliza tanto listas planas como respuestas envueltas en `data` y mapas
+	 * indexados por ID. Dolibarr puede devolver cualquiera de las tres formas.
+	 */
+	private function normalize_api_list( $data ) {
+		$data = $this->normalize_api_array( $data );
+		if ( isset( $data['data'] ) && is_array( $data['data'] ) ) {
+			$data = $data['data'];
+		}
+		if ( empty( $data ) ) {
+			return array();
+		}
+		if ( isset( $data['id'] ) || isset( $data['rowid'] ) ) {
+			return array( $data );
+		}
+		$normalized = array();
+		foreach ( $data as $key => $item ) {
+			$item = $this->normalize_api_array( $item );
+			if ( empty( $item ) ) {
+				continue;
+			}
+			if ( is_numeric( $key ) && ! isset( $item['id'], $item['rowid'] ) && array_keys( $data ) !== range( 0, count( $data ) - 1 ) ) {
+				$item['id'] = (int) $key;
+			}
+			$normalized[] = $item;
+		}
+		return $normalized;
+	}
+
 	private function payload_hash( $payload ) {
 		$normalize = function ( $value ) use ( &$normalize ) {
 			if ( ! is_array( $value ) ) {
@@ -1113,11 +1147,11 @@ class Dolisync_Product_Sync {
 		}
 
 		$variants = array();
-		foreach ( $this->normalize_api_array( $response['data'] ?? array() ) as $combination ) {
+		foreach ( $this->normalize_api_list( $response['data'] ?? array() ) as $combination ) {
 			if ( ! is_array( $combination ) ) {
 				continue;
 			}
-			$child_id = (int) ( $combination['fk_product_child'] ?? 0 );
+			$child_id = (int) ( $combination['fk_product_child'] ?? $combination['product_child_id'] ?? 0 );
 			if ( $child_id <= 0 ) {
 				throw new RuntimeException(
 					sprintf(
@@ -1139,6 +1173,9 @@ class Dolisync_Product_Sync {
 				);
 			}
 			$child = $this->normalize_api_array( $child_response['data'] ?? array() );
+			if ( isset( $child['data'] ) && is_array( $child['data'] ) ) {
+				$child = $child['data'];
+			}
 
 			$attributes = array();
 			foreach ( (array) ( $combination['attributes'] ?? array() ) as $pair ) {
@@ -1151,6 +1188,15 @@ class Dolisync_Product_Sync {
 					$attributes[ sanitize_title( $attribute_name ) ] = $attribute_value;
 				}
 			}
+			if ( empty( $attributes ) ) {
+				throw new RuntimeException(
+					sprintf(
+						__( 'La variante Dolibarr %1$d del producto %2$d no contiene atributos resolubles; se detiene la importación para no crear una variación WooCommerce corrupta.', 'dolisync' ),
+						$child_id,
+						(int) $dolibarr_product_id
+					)
+				);
+			}
 
 			$variants[] = array_merge( $child, array(
 				'id' => $child_id,
@@ -1161,6 +1207,38 @@ class Dolisync_Product_Sync {
 		return $variants;
 	}
 
+	/**
+	 * Una lista vacía inesperada nunca debe convertir un padre variable en simple
+	 * ni borrar en cascada sus variaciones de WooCommerce.
+	 */
+	private function assert_variations_are_safe( $dolibarr_product_id, $variants, $known_parent = false ) {
+		if ( ! empty( $variants ) ) {
+			return;
+		}
+		$was_variable = (bool) $known_parent;
+		if ( ! $was_variable ) {
+			$relation = $this->get_relation_by_dolibarr_product_id( (int) $dolibarr_product_id );
+			$was_variable = 'variable' === (string) ( $relation['product_type'] ?? '' );
+		}
+		if ( ! $was_variable ) {
+			global $wpdb;
+			$was_variable = (bool) $wpdb->get_var(
+				$wpdb->prepare(
+					"SELECT id FROM {$wpdb->prefix}dolisync_product_variation_relations WHERE dolibarr_product_id = %d LIMIT 1",
+					(int) $dolibarr_product_id
+				)
+			); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		}
+		if ( $was_variable ) {
+			throw new RuntimeException(
+				sprintf(
+					__( 'Dolibarr identifica el producto %d como variable, pero no ha devuelto ninguna combinación. Se cancela la importación para no borrar variaciones existentes en WooCommerce.', 'dolisync' ),
+					(int) $dolibarr_product_id
+				)
+			);
+		}
+	}
+
 	private function resolve_dolibarr_attribute_label( $attribute_id ) {
 		if ( $attribute_id <= 0 ) {
 			return '';
@@ -1168,6 +1246,9 @@ class Dolisync_Product_Sync {
 		if ( ! isset( $this->attribute_cache[ $attribute_id ] ) ) {
 			$response = $this->api_client->get( '/products/attributes/' . $attribute_id );
 			$data = ! empty( $response['success'] ) ? $this->normalize_api_array( $response['data'] ?? array() ) : array();
+			if ( isset( $data['data'] ) && is_array( $data['data'] ) ) {
+				$data = $data['data'];
+			}
 			$this->attribute_cache[ $attribute_id ] = sanitize_text_field( (string) ( $data['label'] ?? $data['ref'] ?? '' ) );
 		}
 		return $this->attribute_cache[ $attribute_id ];
@@ -1180,6 +1261,9 @@ class Dolisync_Product_Sync {
 		if ( ! isset( $this->attribute_value_cache[ $value_id ] ) ) {
 			$response = $this->api_client->get( '/products/attributes/values/' . $value_id );
 			$data = ! empty( $response['success'] ) ? $this->normalize_api_array( $response['data'] ?? array() ) : array();
+			if ( isset( $data['data'] ) && is_array( $data['data'] ) ) {
+				$data = $data['data'];
+			}
 			$this->attribute_value_cache[ $value_id ] = sanitize_text_field( (string) ( $data['value'] ?? $data['ref'] ?? '' ) );
 		}
 		return $this->attribute_value_cache[ $value_id ];
@@ -1254,7 +1338,7 @@ class Dolisync_Product_Sync {
 				}
 
 				if ( empty( $attributes ) ) {
-					foreach ( array( 'color', 'size', 'material', 'variant', 'label' ) as $fallback_key ) {
+					foreach ( array( 'color', 'size', 'material', 'variant' ) as $fallback_key ) {
 						if ( isset( $variation[ $fallback_key ] ) && '' !== trim( (string) $variation[ $fallback_key ] ) ) {
 							$attributes[ sanitize_title( $fallback_key ) ] = sanitize_text_field( (string) $variation[ $fallback_key ] );
 						}

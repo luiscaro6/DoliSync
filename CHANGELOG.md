@@ -5,6 +5,53 @@ Todos los cambios relevantes de DoliSync se documentan en este archivo.
 El formato está basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/)
 y el proyecto utiliza [versionado semántico](https://semver.org/lang/es/).
 
+## [1.2.2] - 2026-09-23
+
+### Corregido
+
+- El panel de productos procesa un lote incremental autenticado como respaldo
+  cuando WP-Cron o las peticiones loopback del servidor no ejecutan la cola.
+- El botón de actualización reactiva inmediatamente una primera carga detenida
+  y no encadena innecesariamente una segunda reconstrucción completa.
+- Las lecturas de caché hacia Dolibarr tienen un tiempo máximo acotado y un solo
+  intento, evitando bloquear la petición de respaldo durante varios minutos.
+- El aviso de caché muestra la fase y el lote que se están procesando, además de
+  indicar cuándo el respaldo del panel sustituye a un WP-Cron desactivado.
+
+## [1.2.1] - 2026-09-23
+
+### Corregido
+
+- La caché de Dolibarr guarda todas las combinaciones de un producto variable
+  antes de enriquecer sus productos hijo, por lo que ya no aparecen sin
+  variaciones mientras se completa la actualización incremental.
+- Un fallo aislado al consultar una combinación o variante queda registrado
+  como aviso recuperable y no bloquea indefinidamente la primera carga; una
+  generación ya atascada con la versión anterior se reanuda automáticamente.
+- El aviso de primera carga se retira al finalizar y su seguimiento utiliza una
+  consulta ligera de estado, sin reconstruir el catálogo completo cada cinco
+  segundos ni detenerse prematuramente en catálogos grandes.
+
+## [1.2.0] - 2026-09-23
+
+### Añadido
+
+- Caché persistente de los catálogos WooCommerce y Dolibarr para que el panel
+  de productos y sus simulaciones no consulten la API durante cada carga.
+- Reconstrucción incremental en segundo plano, con lotes pequeños, bloqueo,
+  reintentos y conservación de la generación anterior hasta completar la nueva.
+- Actualización inmediata de la caché local al editar productos o variaciones de
+  WooCommerce y al sincronizar stock.
+
+### Corregido
+
+- La importación Dolibarr → WooCommerce admite listas de variaciones planas,
+  indexadas por ID o envueltas en `data`, y desempaqueta también el producto hijo.
+- Se impide crear variaciones WooCommerce sin atributos resolubles, evitando
+  registros incompletos cuando Dolibarr devuelve una combinación inconsistente.
+- Una respuesta de combinaciones vacía o incompleta ya no puede borrar las
+  variaciones WooCommerce de un producto que se sabe variable.
+
 ## [1.1.0] - 2026-09-08
 
 ### Añadido
@@ -118,6 +165,9 @@ y el proyecto utiliza [versionado semántico](https://semver.org/lang/es/).
 - Cifrado de credenciales, controles de permisos y saneamiento de registros.
 - Compatibilidad con WooCommerce HPOS y soporte opcional para Cloudflare Access.
 
+[1.2.2]: https://github.com/luiscaro6/DoliSync/compare/v1.2.1...v1.2.2
+[1.2.1]: https://github.com/luiscaro6/DoliSync/compare/v1.2.0...v1.2.1
+[1.2.0]: https://github.com/luiscaro6/DoliSync/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/luiscaro6/DoliSync/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/luiscaro6/DoliSync/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/luiscaro6/DoliSync/compare/v1.0.0-rc1...v1.0.0

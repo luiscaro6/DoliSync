@@ -42,6 +42,7 @@ class Dolisync_Schema {
 			'dolisync_ignored_items' => array( 'id' => 'BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT', 'resource_type' => 'VARCHAR(20) NOT NULL', 'wc_id' => 'BIGINT(20) UNSIGNED NOT NULL DEFAULT 0', 'dolibarr_id' => 'BIGINT(20) UNSIGNED NOT NULL DEFAULT 0', 'ignored_by' => 'BIGINT(20) UNSIGNED NOT NULL DEFAULT 0', 'ignored_at' => 'DATETIME NOT NULL', 'updated_at' => 'DATETIME NOT NULL' ),
 			'dolisync_product_category_mappings' => array( 'id' => 'BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT', 'dolibarr_category_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'dolibarr_parent_category_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'wc_category_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'wc_parent_category_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'category_name' => "VARCHAR(255) NOT NULL DEFAULT ''", 'synced_at' => 'DATETIME NULL DEFAULT NULL', 'created_at' => 'DATETIME NULL DEFAULT NULL', 'updated_at' => 'DATETIME NULL DEFAULT NULL' ),
 			'dolisync_product_variation_relations' => array( 'id' => 'BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT', 'dolibarr_product_id' => 'BIGINT(20) UNSIGNED NOT NULL', 'wc_product_id' => 'BIGINT(20) UNSIGNED NOT NULL', 'dolibarr_variation_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'dolibarr_combination_id' => 'BIGINT(20) UNSIGNED NULL DEFAULT NULL', 'wc_variation_id' => 'BIGINT(20) UNSIGNED NOT NULL', 'sku' => "VARCHAR(190) NOT NULL DEFAULT ''", 'price' => 'DECIMAL(18,6) NULL DEFAULT NULL', 'stock_qty' => 'DECIMAL(18,6) NULL DEFAULT NULL', 'attributes_json' => 'LONGTEXT NULL', 'synced_at' => 'DATETIME NULL DEFAULT NULL', 'created_at' => 'DATETIME NULL DEFAULT NULL', 'updated_at' => 'DATETIME NULL DEFAULT NULL' ),
+			'dolisync_product_catalog_cache' => array( 'id' => 'BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT', 'source' => 'VARCHAR(20) NOT NULL', 'source_id' => 'BIGINT(20) UNSIGNED NOT NULL', 'product_data' => 'LONGTEXT NOT NULL', 'payload_hash' => 'CHAR(64) NOT NULL', 'refresh_token' => 'VARCHAR(64) NOT NULL', 'refreshed_at' => 'DATETIME NOT NULL', 'created_at' => 'DATETIME NOT NULL', 'updated_at' => 'DATETIME NOT NULL' ),
 		);
 	}
 
@@ -76,6 +77,7 @@ class Dolisync_Schema {
 		self::ensure_ignored_items_table();
 		self::ensure_product_category_mappings_table();
 		self::ensure_product_variation_relations_table();
+		self::ensure_product_catalog_cache_table();
 		self::ensure_config_columns();
 		self::ensure_log_columns();
 		self::ensure_product_variation_relation_columns();
@@ -427,7 +429,7 @@ class Dolisync_Schema {
     /**
      * Asegura la tabla de relaciones de variaciones de producto.
      */
-    public static function ensure_product_variation_relations_table() {
+	public static function ensure_product_variation_relations_table() {
         global $wpdb;
 
         $table = $wpdb->prefix . 'dolisync_product_variation_relations';
@@ -462,6 +464,35 @@ class Dolisync_Schema {
 
 		self::execute_schema_query( $sql, 'crear tabla de relaciones de variaciones' );
     }
+
+	/**
+	 * Caché persistente usada por el catálogo y las simulaciones. Se mantiene
+	 * separada de las relaciones porque también contiene elementos sin vincular.
+	 */
+	public static function ensure_product_catalog_cache_table() {
+		global $wpdb;
+		$table = $wpdb->prefix . 'dolisync_product_catalog_cache';
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+			return;
+		}
+		$charset_collate = $wpdb->get_charset_collate();
+		$sql = "CREATE TABLE {$table} (
+			id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+			source VARCHAR(20) NOT NULL,
+			source_id BIGINT(20) UNSIGNED NOT NULL,
+			product_data LONGTEXT NOT NULL,
+			payload_hash CHAR(64) NOT NULL,
+			refresh_token VARCHAR(64) NOT NULL,
+			refreshed_at DATETIME NOT NULL,
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL,
+			PRIMARY KEY (id),
+			UNIQUE KEY source_item (source, source_id),
+			KEY source_refreshed (source, refreshed_at),
+			KEY refresh_token (refresh_token)
+		) {$charset_collate};";
+		self::execute_schema_query( $sql, 'crear caché del catálogo de productos' );
+	}
 
     /**
      * Añade campos de trazabilidad de combinaciones a instalaciones existentes.

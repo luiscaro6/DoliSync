@@ -69,11 +69,11 @@ class Dolisync_Stock_Sync {
 		$product_table = $wpdb->prefix . 'dolisync_product_relations';
 		$variation_table = $wpdb->prefix . 'dolisync_product_variation_relations';
 		$sql = "
-			SELECT 'product' AS relation_type, id AS relation_id, dolibarr_product_id, wc_product_id, stock_qty
+			SELECT 'product' AS relation_type, id AS relation_id, dolibarr_product_id, dolibarr_product_id AS parent_dolibarr_product_id, wc_product_id, stock_qty
 			FROM {$product_table}
 			WHERE dolibarr_product_id > 0 AND wc_product_id > 0
 			UNION ALL
-			SELECT 'variation' AS relation_type, id AS relation_id, dolibarr_variation_id AS dolibarr_product_id, wc_variation_id AS wc_product_id, stock_qty
+			SELECT 'variation' AS relation_type, id AS relation_id, dolibarr_variation_id AS dolibarr_product_id, dolibarr_product_id AS parent_dolibarr_product_id, wc_variation_id AS wc_product_id, stock_qty
 			FROM {$variation_table}
 			WHERE dolibarr_variation_id > 0 AND wc_variation_id > 0
 			ORDER BY relation_type ASC, relation_id ASC
@@ -111,6 +111,12 @@ class Dolisync_Stock_Sync {
 			throw new Exception( 'Dolibarr no devolvió existencias numéricas. Comprueba que el usuario de la API tenga permiso de lectura de stock.' );
 		}
 		$stock = (float) $stock;
+		require_once DOLISYNC_PLUGIN_DIR . 'includes/cache/class-dolisync-product-catalog-cache.php';
+		Dolisync_Product_Catalog_Cache::update_dolibarr_stock(
+			$dolibarr_product_id,
+			$stock,
+			'variation' === ( $relation['relation_type'] ?? '' ) ? (int) ( $relation['parent_dolibarr_product_id'] ?? 0 ) : 0
+		);
 		$current_stock = $wc_product->get_stock_quantity();
 		$target_status = $stock > 0 ? 'instock' : ( $wc_product->backorders_allowed() ? 'onbackorder' : 'outofstock' );
 		$unchanged = $wc_product->get_manage_stock()

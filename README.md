@@ -6,7 +6,7 @@ DoliSync sincroniza productos, clientes y existencias, transforma los pedidos de
 WooCommerce en facturas de cliente de Dolibarr y recupera el PDF fiscal para
 adjuntarlo al correo del comprador.
 
-![Versión](https://img.shields.io/badge/versi%C3%B3n-1.1.0-2563eb)
+![Versión](https://img.shields.io/badge/versi%C3%B3n-1.2.2-2563eb)
 ![PHP](https://img.shields.io/badge/PHP-%3E%3D%208.1-777bb4?logo=php&logoColor=white)
 ![WordPress](https://img.shields.io/badge/WordPress-%3E%3D%206.0-21759b?logo=wordpress&logoColor=white)
 ![WooCommerce](https://img.shields.io/badge/WooCommerce-%3E%3D%206.0-96588a&logo=woocommerce&logoColor=white)
@@ -213,6 +213,16 @@ por cada sentido. Cada simulación calcula altas y modificaciones de solo lectur
 muestra los campos afectados y permite enviar una fila concreta o todos los
 cambios pendientes de forma secuencial.
 
+El catálogo de productos y ambas simulaciones se sirven desde una caché local.
+La caché se reconstruye de forma incremental mediante WP-Cron y conserva los
+datos anteriores durante el proceso. El botón **Actualizar catálogo** solicita una
+nueva reconstrucción; no ejecuta una lectura completa de Dolibarr en la petición
+del navegador. En producción es recomendable ejecutar `wp-cron.php` cada minuto,
+especialmente si el sitio tiene poco tráfico; cada ejecución procesa solo un lote
+acotado. Durante el primer llenado se muestran los datos ya disponibles, pero las
+simulaciones y acciones de producto quedan bloqueadas hasta que ambos catálogos
+estén completos para evitar falsos positivos o duplicados.
+
 ### Reparación de categorías de variantes
 
 En **DoliSync → Categorías → Asistente de variantes** puedes reparar los productos
@@ -249,6 +259,7 @@ El plugin crea tablas propias usando el prefijo configurado en WordPress:
 | `dolisync_product_relations` | Relación entre productos |
 | `dolisync_product_conflicts` | Conflictos de identidad y relaciones de producto rotas |
 | `dolisync_product_variation_relations` | Relación entre variaciones |
+| `dolisync_product_catalog_cache` | Caché local incremental del catálogo comparativo |
 | `dolisync_product_category_mappings` | Mapeo de categorías |
 | `dolisync_product_category_relations` | Relaciones auxiliares de categorías |
 | `dolisync_order_relations` | Relación entre pedidos y facturas |

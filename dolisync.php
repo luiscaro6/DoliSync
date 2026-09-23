@@ -9,7 +9,7 @@
  * Plugin Name:   DoliSync
  * Plugin URI:    https://github.com/luiscaro6/DoliSync
  * Description:   Sincronización Dolibarr CRM ↔ WooCommerce vía API REST
- * Version:       1.1.0
+ * Version:       1.2.2
  * Author:        Luis Caro	
  * License:       GPL-3.0-or-later
  * License URI:   https://www.gnu.org/licenses/gpl-3.0.html
@@ -25,7 +25,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 if ( ! defined( 'DOLISYNC_VERSION' ) ) {
-	define( 'DOLISYNC_VERSION', '1.1.0' );
+	define( 'DOLISYNC_VERSION', '1.2.2' );
 }
 
 if ( ! defined( 'DOLISYNC_PLUGIN_DIR' ) ) {
@@ -49,6 +49,7 @@ require_once DOLISYNC_PLUGIN_DIR . 'includes/class-dolisync-deactivator.php';
 require_once DOLISYNC_PLUGIN_DIR . 'includes/class-dolisync-cron.php';
 require_once DOLISYNC_PLUGIN_DIR . 'includes/database/class-dolisync-schema.php';
 require_once DOLISYNC_PLUGIN_DIR . 'includes/database/class-dolisync-migrations.php';
+require_once DOLISYNC_PLUGIN_DIR . 'includes/cache/class-dolisync-product-catalog-cache.php';
 
 register_activation_hook( __FILE__, array( 'Dolisync_Activator', 'activate' ) );
 register_deactivation_hook( __FILE__, array( 'Dolisync_Deactivator', 'deactivate' ) );
@@ -63,6 +64,7 @@ add_action( 'before_woocommerce_init', static function () {
 function dolisync_init() {
 	load_plugin_textdomain( 'dolisync', false, dirname( DOLISYNC_PLUGIN_BASENAME ) . '/languages' );
 	Dolisync_Migrations::maybe_migrate();
+	Dolisync_Product_Catalog_Cache::init();
 
 	if ( class_exists( 'WooCommerce' ) ) {
 		require_once DOLISYNC_PLUGIN_DIR . 'includes/woocommerce/class-dolisync-woocommerce-users.php';
